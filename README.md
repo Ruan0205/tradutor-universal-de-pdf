@@ -20,6 +20,13 @@
 
 #### 🖼️ Galeria de Telas
 
+#### 🔗 Links diretos (`Imagens-telas`)
+- [Tela livros](Imagens-telas/Tela%20livros.png)
+- [Tela modelos de IA](Imagens-telas/Tela%20modelos%20de%20IA.png)
+- [Tela configurações](Imagens-telas/Tela%20configura%C3%A7%C3%B5es.png)
+- [Tela validador](Imagens-telas/Tela%20validador.png)
+- [Tela visualizador](Imagens-telas/Tela%20visualizador.png)
+
 #### 📚 Gerenciamento de Livros
 <p align="center">
   <img src="Imagens-telas/Tela%20livros.png" alt="Tela de gerenciamento da fila de livros" width="100%">
