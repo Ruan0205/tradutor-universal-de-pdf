@@ -6,6 +6,16 @@
 
 ---
 
+## 🖥️ Preview
+
+<p align="center">
+  <img src="Tela%20do%20projeto.png" alt="Tela inicial do Tradutor Universal de PDFs — Dashboard em funcionamento" width="100%">
+</p>
+
+<p align="center"><em>Dashboard web do projeto em funcionamento — tradução de PDFs com IA local em tempo real.</em></p>
+
+---
+
 ## ✨ Funcionalidades
 
 ### 🔄 Tradução Inteligente
