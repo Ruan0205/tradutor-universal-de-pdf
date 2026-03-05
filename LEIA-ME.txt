@@ -60,7 +60,7 @@ tradutor-universal-de-pdf/
 ├── livros-para-traduzir/   ← COLOQUE SEUS PDFs AQUI
 ├── traduzindo/             ← PDFs sendo processados
 ├── traduzidos/             ← PDFs traduzidos (resultado final)
-└── em-inges/               ← PDFs originais em inglês
+└── na-lingua-anterior/     ← PDFs na língua original anterior
 
 
 ═══════════════════════════════════════════════════════════════════════════
@@ -206,7 +206,7 @@ PASSO 4: Acompanhar progresso
 
 PASSO 5: Resultado
    • PDF traduzido estará em: "traduzidos/"
-   • PDF original movido para: "em-inges/"
+   • PDF original movido para: "na-lingua-anterior/"
    • Logs de validação em: "validation_report.log"
 
 

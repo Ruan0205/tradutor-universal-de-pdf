@@ -12,11 +12,11 @@ for %%A in (%*) do (
 set "SELF=%~f0"
 call :set_paths
 
-title Instalador - Tradutor Universal de PDF v1.7
+title Instalador - Tradutor Universal de PDF v1.8
 
 echo.
 echo ================================================================
-echo   INSTALADOR AUTOMATICO v1.7
+echo   INSTALADOR AUTOMATICO v1.8
 echo   Tradutor Universal de PDF
 echo ================================================================
 echo.
@@ -76,7 +76,7 @@ if exist "!VENV_DIR!\Scripts\python.exe" (
 echo.
 echo [3/5] Instalando pacotes Python...
 "!VENV_PIP!" install --upgrade pip >nul 2>&1
-"!VENV_PIP!" install PyMuPDF Pillow rapidocr-onnxruntime tqdm
+"!VENV_PIP!" install PyMuPDF Pillow rapidocr-onnxruntime tqdm pystray
 if !errorlevel! neq 0 (
     echo    ERRO: falha na instalacao de dependencias Python.
     exit /b 1
@@ -141,7 +141,7 @@ set "PYTHON_PATH_FILE=!ENGINE_DIR!\.python_path"
 set "DEPS_FILE=!ENGINE_DIR!\.deps_installed"
 set "INPUT_DIR=!PROJECT_DIR!\livros-para-traduzir"
 set "OUTPUT_DIR=!PROJECT_DIR!\traduzidos"
-set "ORIGINALS_DIR=!PROJECT_DIR!\em-inges"
+set "ORIGINALS_DIR=!PROJECT_DIR!\na-lingua-anterior"
 set "WORKING_DIR=!PROJECT_DIR!\traduzindo"
 set "OLLAMA_EXE="
 set "OLLAMA_MODEL_PRIMARY=translategemma"
@@ -299,7 +299,7 @@ exit /b 0
 :success
 echo.
 echo ================================================================
-echo   INSTALACAO CONCLUIDA COM SUCESSO (v1.7)
+echo   INSTALACAO CONCLUIDA COM SUCESSO (v1.8)
 echo ================================================================
 echo 1. Execute iniciar.bat
 echo 2. Abra o dashboard no navegador

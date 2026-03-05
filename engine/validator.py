@@ -22,9 +22,30 @@ BASE_DIR = PROJECT_DIR
 
 CONFIG_FILE = ENGINE_DIR / "config.json"
 OUTPUT_DIR = BASE_DIR / "traduzidos"
-ENGLISH_DIR = BASE_DIR / "em-inges"
+PREVIOUS_LANG_DIR = BASE_DIR / "na-lingua-anterior"
+LEGACY_PREVIOUS_LANG_DIR = BASE_DIR / "em-inges"
+ENGLISH_DIR = PREVIOUS_LANG_DIR  # Compatibilidade interna com o restante do código
 REPORT_FILE = BASE_DIR / "validation_report.log"
 TRANSLATION_LOG = BASE_DIR / "translation.log"
+
+
+def ensure_previous_lang_dir():
+    PREVIOUS_LANG_DIR.mkdir(parents=True, exist_ok=True)
+    if not LEGACY_PREVIOUS_LANG_DIR.exists() or not LEGACY_PREVIOUS_LANG_DIR.is_dir():
+        return
+    for item in LEGACY_PREVIOUS_LANG_DIR.iterdir():
+        target = PREVIOUS_LANG_DIR / item.name
+        if target.exists():
+            continue
+        try:
+            item.rename(target)
+        except Exception:
+            pass
+    try:
+        if not any(LEGACY_PREVIOUS_LANG_DIR.iterdir()):
+            LEGACY_PREVIOUS_LANG_DIR.rmdir()
+    except Exception:
+        pass
 
 
 def load_config() -> dict:
@@ -125,6 +146,42 @@ def get_detailed_blocks(page: fitz.Page) -> List[dict]:
             "dominant_flags": dominant_flags,
         })
     return blocks
+
+
+def get_line_entries(page: fitz.Page) -> List[dict]:
+    """Extract line-level text entries for line-count and per-line char checks."""
+    d = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    entries: List[dict] = []
+    for b in d.get("blocks", []):
+        if b.get("type") != 0:
+            continue
+        for line in b.get("lines", []):
+            text = "".join(s.get("text", "") for s in line.get("spans", []))
+            text = re.sub(r"\s+", " ", text).strip()
+            if not text:
+                continue
+            bbox = line.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            rect = fitz.Rect(bbox)
+            entries.append({
+                "rect": rect,
+                "text": text,
+                "char_count": len(text),
+            })
+    return entries
+
+
+def get_image_rects(page: fitz.Page) -> List[fitz.Rect]:
+    rects: List[fitz.Rect] = []
+    for img in page.get_images(full=True):
+        xref = img[0]
+        try:
+            for r in page.get_image_rects(xref):
+                rects.append(fitz.Rect(r))
+        except Exception:
+            continue
+    return rects
 
 
 # =====================================================================
@@ -254,7 +311,7 @@ def validate_page(orig_page, trans_page, page_num, method="structural") -> dict:
 
 
 def _validate_page_structural(orig_page, trans_page, page_num) -> dict:
-    """Standard structural validation - block counts, sizes, overlaps."""
+    """Validação estrutural: avalia apenas estrutura/layout da página."""
     report = {"page": page_num, "issues": [], "stats": {}, "pass": True}
     orig_blocks = get_text_blocks(orig_page)
     trans_blocks = get_text_blocks(trans_page)
@@ -266,24 +323,6 @@ def _validate_page_structural(orig_page, trans_page, page_num) -> dict:
         ratio = len(trans_blocks) / len(orig_blocks)
         if ratio < 0.5:
             report["issues"].append(f"BLOCK_COUNT_LOW: ratio={ratio:.2f}")
-            report["pass"] = False
-
-    # Untranslated text check
-    untranslated_count = 0
-    total_translatable = 0
-    for tb in trans_blocks:
-        words = tb["text"].split()
-        if len(words) < 4:
-            continue
-        total_translatable += 1
-        if is_likely_english(tb["text"]):
-            untranslated_count += 1
-
-    if total_translatable > 0:
-        untrans_ratio = untranslated_count / total_translatable
-        report["stats"]["untranslated_ratio"] = round(untrans_ratio, 3)
-        if untrans_ratio > 0.3:
-            report["issues"].append(f"HIGH_UNTRANSLATED: {untrans_ratio:.0%}")
             report["pass"] = False
 
     # Font size check
@@ -312,42 +351,48 @@ def _validate_page_structural(orig_page, trans_page, page_num) -> dict:
         report["issues"].append("EMPTY_PAGE")
         report["pass"] = False
 
-    # Character count ratio
-    orig_chars = sum(b["char_count"] for b in orig_blocks)
-    trans_chars = sum(b["char_count"] for b in trans_blocks)
-    report["stats"]["orig_chars"] = orig_chars
-    report["stats"]["trans_chars"] = trans_chars
-    if orig_chars > 50:
-        char_ratio = trans_chars / orig_chars
-        report["stats"]["char_ratio"] = round(char_ratio, 3)
-        if char_ratio < 0.3:
-            report["issues"].append(f"CHAR_COUNT_LOW: ratio={char_ratio:.2f}")
-            report["pass"] = False
-
     if not report["issues"]:
         report["issues"].append("OK")
     return report
 
 
 def _validate_page_char_count(orig_page, trans_page, page_num) -> dict:
-    """Simple character count validation."""
+    """Validação por contagem de caracteres (total e por linha)."""
     report = {"page": page_num, "issues": [], "stats": {}, "pass": True}
-    orig_blocks = get_text_blocks(orig_page)
-    trans_blocks = get_text_blocks(trans_page)
+    orig_lines = get_line_entries(orig_page)
+    trans_lines = get_line_entries(trans_page)
 
-    orig_chars = sum(b["char_count"] for b in orig_blocks)
-    trans_chars = sum(b["char_count"] for b in trans_blocks)
+    orig_chars = sum(b["char_count"] for b in orig_lines)
+    trans_chars = sum(b["char_count"] for b in trans_lines)
     report["stats"]["orig_chars"] = orig_chars
     report["stats"]["trans_chars"] = trans_chars
+    report["stats"]["orig_lines"] = len(orig_lines)
+    report["stats"]["trans_lines"] = len(trans_lines)
 
-    if orig_chars > 30:
+    if orig_chars > 0:
         char_ratio = trans_chars / orig_chars
         report["stats"]["char_ratio"] = round(char_ratio, 3)
-        if char_ratio < 0.3 or char_ratio > 3.0:
+        if char_ratio < 0.25 or char_ratio > 3.5:
             report["issues"].append(f"CHAR_RATIO_BAD: {char_ratio:.2f}")
             report["pass"] = False
 
-    if len(orig_blocks) > 3 and len(trans_blocks) == 0:
+    # Compara também distribuição de caracteres por linha para refletir o modo char_count
+    pairs = min(len(orig_lines), len(trans_lines))
+    if pairs > 0:
+        bad_lines = 0
+        for i in range(pairs):
+            o = max(1, orig_lines[i]["char_count"])
+            t = trans_lines[i]["char_count"]
+            ratio = t / o
+            if ratio < 0.2 or ratio > 4.0:
+                bad_lines += 1
+        bad_ratio = bad_lines / pairs
+        report["stats"]["line_char_bad_ratio"] = round(bad_ratio, 3)
+        if bad_ratio > 0.45:
+            report["issues"].append(f"LINE_CHAR_RATIO_BAD: {bad_lines}/{pairs}")
+            report["pass"] = False
+
+    if len(orig_lines) > 3 and len(trans_lines) == 0:
         report["issues"].append("EMPTY_PAGE")
         report["pass"] = False
 
@@ -357,7 +402,7 @@ def _validate_page_char_count(orig_page, trans_page, page_num) -> dict:
 
 
 def _validate_page_hybrid(orig_page, trans_page, page_num) -> dict:
-    """Enhanced hybrid validation: structural + font + color + table checks."""
+    """Validação híbrida: layout + estilo + linhas + proteção contra texto sobre imagem indevido."""
     report = {"page": page_num, "issues": [], "stats": {}, "pass": True}
 
     orig_blocks = get_detailed_blocks(orig_page)
@@ -371,6 +416,33 @@ def _validate_page_hybrid(orig_page, trans_page, page_num) -> dict:
         report["stats"]["block_ratio"] = round(ratio, 3)
         if ratio < 0.5:
             report["issues"].append(f"BLOCK_COUNT_LOW: ratio={ratio:.2f}")
+            report["pass"] = False
+
+    # === Line count and per-line char consistency ===
+    orig_lines = get_line_entries(orig_page)
+    trans_lines = get_line_entries(trans_page)
+    report["stats"]["orig_lines"] = len(orig_lines)
+    report["stats"]["trans_lines"] = len(trans_lines)
+    if len(orig_lines) > 0:
+        line_ratio = len(trans_lines) / len(orig_lines)
+        report["stats"]["line_ratio"] = round(line_ratio, 3)
+        if line_ratio < 0.6 or line_ratio > 1.7:
+            report["issues"].append(f"LINE_COUNT_MISMATCH: ratio={line_ratio:.2f}")
+            report["pass"] = False
+
+    pairs = min(len(orig_lines), len(trans_lines))
+    if pairs > 0:
+        bad_line_chars = 0
+        for i in range(pairs):
+            o = max(1, orig_lines[i]["char_count"])
+            t = trans_lines[i]["char_count"]
+            ratio = t / o
+            if ratio < 0.2 or ratio > 4.0:
+                bad_line_chars += 1
+        bad_line_ratio = bad_line_chars / pairs
+        report["stats"]["line_char_bad_ratio"] = round(bad_line_ratio, 3)
+        if bad_line_ratio > 0.4:
+            report["issues"].append(f"LINE_CHAR_RATIO_BAD: {bad_line_chars}/{pairs}")
             report["pass"] = False
 
     # === Untranslated text check ===
@@ -423,6 +495,19 @@ def _validate_page_hybrid(orig_page, trans_page, page_num) -> dict:
     if matched_count > 0 and color_mismatches / matched_count > 0.3:
         report["issues"].append(
             f"COLOR_MISMATCH: {color_mismatches}/{matched_count} blocks"
+        )
+        report["pass"] = False
+
+    # === Text-over-image consistency ===
+    orig_img_rects = get_image_rects(orig_page)
+    trans_img_rects = get_image_rects(trans_page)
+    orig_text_over_img = sum(1 for b in orig_blocks if any(rects_overlap(b["rect"], r) for r in orig_img_rects))
+    trans_text_over_img = sum(1 for b in trans_blocks if any(rects_overlap(b["rect"], r) for r in trans_img_rects))
+    report["stats"]["orig_text_over_image"] = orig_text_over_img
+    report["stats"]["trans_text_over_image"] = trans_text_over_img
+    if trans_text_over_img > orig_text_over_img + 2:
+        report["issues"].append(
+            f"TEXT_OVER_IMAGE_EXCESS: orig={orig_text_over_img} trans={trans_text_over_img}"
         )
         report["pass"] = False
 
@@ -532,6 +617,7 @@ def validate_book(orig_path: str, trans_path: str, mode="25%",
         method: "structural", "char_count", or "hybrid"
         fidelity_threshold: Pass threshold percentage (0-100)
     """
+    ensure_previous_lang_dir()
     orig_doc = fitz.open(orig_path)
     trans_doc = fitz.open(trans_path)
 
@@ -636,6 +722,7 @@ def log_result(text: str):
 
 def continuous_validate():
     """Monitor and validate new translations."""
+    ensure_previous_lang_dir()
     print("=" * 60)
     print("CONTINUOUS VALIDATION MONITOR")
     print(f"Watching: {OUTPUT_DIR}")

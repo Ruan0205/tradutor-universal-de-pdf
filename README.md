@@ -1,4 +1,4 @@
-# 📚 Tradutor Universal de PDFs — v1.7
+# 📚 Tradutor Universal de PDFs — v1.8
 
 **Traduza livros PDF inteiros automaticamente usando modelos de IA local (Ollama).**
 
@@ -77,9 +77,9 @@
 
 ### ✅ Validação Automática
 - **3 métodos de validação:**
-  - **Estrutural** — compara blocos, fontes, contagem de caracteres e sobreposição
-  - **Contagem de Caracteres** — verifica proporção de caracteres original vs tradução
-  - **Híbrido** — análise completa: fontes, cores, tabelas, sobreposição e trechos não traduzidos
+  - **Estrutural** — foca somente na estrutura/layout (blocos, proporções e sobreposição)
+  - **Contagem de Caracteres** — foca somente em caracteres (total e por linha)
+  - **Híbrido** — análise completa: estrutura, fontes, cores, tabelas, linhas, sobreposição e texto sobre imagem
 - **Modos de cobertura:** 25% aleatório (padrão), 50% aleatório, ou todas as páginas
 - **Tolerância de fidelidade** configurável (0-100%, padrão 90%)
 - Validação contínua — monitora automaticamente novos livros traduzidos
@@ -122,9 +122,10 @@ O instalador faz automaticamente:
 ### ▶ Execução diária
 
 1. Execute `iniciar.bat`.
-2. O dashboard abre automaticamente no navegador.
-3. Coloque os PDFs em `livros-para-traduzir`.
-4. Clique em **Iniciar** no dashboard.
+2. O sistema inicia em segundo plano (ícone na bandeja do Windows).
+3. O dashboard abre automaticamente no navegador em `http://localhost:8050/`.
+4. Coloque os PDFs em `livros-para-traduzir`.
+5. Clique em **Iniciar** no dashboard.
 
 ### 📁 Estrutura atual do projeto
 
@@ -144,7 +145,7 @@ tradutor-universal-de-pdf/
 ├── livros-para-traduzir/
 ├── traduzindo/
 ├── traduzidos/
-└── em-inges/
+└── na-lingua-anterior/
 ```
 
 ### 🧩 Instalação manual (somente se precisar)
@@ -155,7 +156,7 @@ Se o `instalador.bat` não puder ser usado, você pode instalar manualmente:
 python -m venv .venv
 .venv\Scripts\activate
 pip install --upgrade pip
-pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm
+pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm pystray
 ollama pull translategemma
 ```
 
@@ -174,9 +175,16 @@ ollama pull translategemma
 
 ---
 
-## 📋 Changelog v1.7
+## 📋 Changelog v1.8
 
 - Seleção de PDFs por explorador de arquivos do Windows com suporte a múltiplos arquivos
+- Inicialização em segundo plano com ícone na bandeja do Windows (sem terminal fixo aberto)
+- Dashboard fixado em `http://localhost:8050/` ao iniciar
+- Pasta de originais renomeada para `na-lingua-anterior` (com migração automática da pasta antiga)
+- Modo híbrido reforçado com controle de linhas e maior fidelidade de encaixe de texto no layout
+- Modo estrutural focado apenas em estrutura/layout
+- Modo contagem de caracteres focado apenas em caracteres (total e por linha)
+- Temperatura padrão do Ollama alterada para `0.4`
 - Pipeline completo de tradução de PDFs com IA local
 - Dashboard web com controles em tempo real
 - 3 métodos de validação (estrutural, contagem, híbrido)
@@ -210,7 +218,7 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 
 ---
 
-*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.7*
+*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.8*
 
 ## 🙏 Créditos e Reconhecimentos
 

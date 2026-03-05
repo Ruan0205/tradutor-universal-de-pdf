@@ -13,7 +13,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -44,7 +43,9 @@ TRANSLATION_LOG = BASE_DIR / "translation.log"
 INPUT_DIR = BASE_DIR / "livros-para-traduzir"
 TRANSLATING_DIR = BASE_DIR / "traduzindo"
 OUTPUT_DIR = BASE_DIR / "traduzidos"
-ENGLISH_DIR = BASE_DIR / "em-inges"
+PREVIOUS_LANG_DIR = BASE_DIR / "na-lingua-anterior"
+LEGACY_PREVIOUS_LANG_DIR = BASE_DIR / "em-inges"
+ENGLISH_DIR = PREVIOUS_LANG_DIR
 
 PYTHON_EXE = str(PROJECT_DIR / ".venv" / "Scripts" / "python.exe")
 PIPELINE_SCRIPT = str(ENGINE_DIR / "pipeline.py")
@@ -89,6 +90,25 @@ _monitor_thread = threading.Thread(target=_monitor_pipeline_process, daemon=True
 _monitor_thread.start()
 
 
+def ensure_previous_lang_dir():
+    PREVIOUS_LANG_DIR.mkdir(parents=True, exist_ok=True)
+    if not LEGACY_PREVIOUS_LANG_DIR.exists() or not LEGACY_PREVIOUS_LANG_DIR.is_dir():
+        return
+    for item in LEGACY_PREVIOUS_LANG_DIR.iterdir():
+        target = PREVIOUS_LANG_DIR / item.name
+        if target.exists():
+            continue
+        try:
+            shutil.move(str(item), str(target))
+        except Exception:
+            pass
+    try:
+        if not any(LEGACY_PREVIOUS_LANG_DIR.iterdir()):
+            LEGACY_PREVIOUS_LANG_DIR.rmdir()
+    except Exception:
+        pass
+
+
 def load_config() -> dict:
     defaults = {
         "ollama_url": "http://localhost:11434",
@@ -102,7 +122,7 @@ def load_config() -> dict:
         "sort_order": "smallest_first",
         "custom_order": [],
         "ollama_options": {
-            "temperature": 0.2,
+            "temperature": 0.4,
             "top_p": 0.9,
             "num_ctx": 8192,
         },
@@ -878,32 +898,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass  # Suppress request logs
 
 
-def find_free_port(start=8050, end=8099):
-    for port in range(start, end):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("0.0.0.0", port))
-                return port
-        except OSError:
-            continue
-    return start
+def get_server_port() -> int:
+    raw = os.environ.get("TUP_PORT", "8050").strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        port = 8050
+    if port < 1 or port > 65535:
+        port = 8050
+    return port
 
 
 def main():
-    port = find_free_port()
+    ensure_previous_lang_dir()
+    port = get_server_port()
     print(f"\n{'='*60}")
     print(f"  TRADUTOR UNIVERSAL DE PDF - Dashboard")
     print(f"  http://localhost:{port}")
     print(f"{'='*60}\n")
-    
-    # Atualizar base_dir no config para o diretório real atual
-    # (evita paths de outra máquina/disco ficarem no config.json)
-    cfg = load_config()
-    if cfg.get("base_dir") != str(BASE_DIR):
-        log.info("Atualizando base_dir: %s -> %s", cfg.get('base_dir'), str(BASE_DIR))
-        cfg["base_dir"] = str(BASE_DIR)
-        save_config(cfg)
-
     # Criar pastas necessárias
     for d in [INPUT_DIR, TRANSLATING_DIR, OUTPUT_DIR, ENGLISH_DIR]:
         d.mkdir(parents=True, exist_ok=True)
@@ -911,7 +923,11 @@ def main():
     # Inicializar arquivo de estado
     write_state({"status": "idle"})
 
-    server = HTTPServer(("0.0.0.0", port), DashboardHandler)
+    try:
+        server = HTTPServer(("0.0.0.0", port), DashboardHandler)
+    except OSError as e:
+        log.error("Nao foi possivel iniciar o servidor na porta %d: %s", port, e)
+        return
     # Write port to file for the launcher to read
     (ENGINE_DIR / "server_port.txt").write_text(str(port))
 

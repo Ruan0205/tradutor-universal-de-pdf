@@ -227,7 +227,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
 <div class="sidebar">
   <div class="logo">
     <h2>📚 Tradutor Universal</h2>
-    <small>v1.7 • PDF • Ollama • AI</small>
+    <small>v1.8 • PDF • Ollama • AI</small>
   </div>
   <nav>
     <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
@@ -471,21 +471,21 @@ button { cursor:pointer; font-family:inherit; border:none; }
         <div class="model-card" id="valMethodStructural" onclick="setValMethod('structural')">
           <div class="info">
             <h4>📐 Estrutural</h4>
-            <small>Compara blocos de texto, fontes, contagens de caracteres e sobreposição entre original e tradução. Rápido e sem IA.</small>
+            <small>Foca somente na estrutura da página (blocos, posição, proporção e sobreposição). Não prioriza comparação semântica.</small>
           </div>
           <button class="btn btn-sm btn-secondary">Usar</button>
         </div>
         <div class="model-card" id="valMethodCharCount" onclick="setValMethod('char_count')">
           <div class="info">
             <h4>📊 Contagem de Caracteres</h4>
-            <small>Verifica se a tradução mantém proporção razoável de caracteres em relação ao original. Simples e rápido.</small>
+            <small>Foca somente na quantidade de caracteres (total e por linha), para controlar expansão/compactação de texto.</small>
           </div>
           <button class="btn btn-sm btn-secondary">Usar</button>
         </div>
         <div class="model-card" id="valMethodHybrid" onclick="setValMethod('hybrid')">
           <div class="info">
             <h4>🔬 Híbrido</h4>
-            <small>Análise completa: verifica fontes, cores, tabelas, sobreposição e trechos não traduzidos. Busca a fonte mais semelhante se houver divergência.</small>
+            <small>Análise completa: estrutura + fontes + cores + tabelas + contagem de linhas e controle de texto sobre imagem para máxima fidelidade visual.</small>
           </div>
           <button class="btn btn-sm btn-secondary">Usar</button>
         </div>
@@ -1225,7 +1225,7 @@ function renderModels() {
 
   // Ollama options
   document.getElementById('optNumCtx').value = opts.num_ctx ?? 8192;
-  document.getElementById('optTemperature').value = opts.temperature ?? 0.2;
+  document.getElementById('optTemperature').value = opts.temperature ?? 0.4;
   document.getElementById('optTopP').value = opts.top_p ?? 0.9;
   document.getElementById('optNumGpu').value = opts.num_gpu ?? '';
   document.getElementById('optNumThread').value = opts.num_thread ?? '';

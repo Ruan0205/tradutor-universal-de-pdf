@@ -49,8 +49,9 @@ DEFAULT_CONFIG = {
     "target_lang": "Português Brasileiro",
     "sort_order": "smallest_first",
     "custom_order": [],
+    "validation_method": "structural",
     "ollama_options": {
-        "temperature": 0.2,
+        "temperature": 0.4,
         "top_p": 0.9,
         "num_ctx": 8192,
     },
@@ -82,8 +83,30 @@ CFG["base_dir"] = str(BASE_DIR)
 INPUT_DIR = BASE_DIR / "livros-para-traduzir"
 TRANSLATING_DIR = BASE_DIR / "traduzindo"
 OUTPUT_DIR = BASE_DIR / "traduzidos"
-ENGLISH_DIR = BASE_DIR / "em-inges"
+PREVIOUS_LANG_DIR = BASE_DIR / "na-lingua-anterior"
+LEGACY_PREVIOUS_LANG_DIR = BASE_DIR / "em-inges"
+ENGLISH_DIR = PREVIOUS_LANG_DIR  # Compatibilidade interna com código existente
 LOG_FILE = BASE_DIR / "translation.log"
+
+
+def ensure_previous_lang_dir():
+    """Garante a pasta atual e migra conteúdo legado de em-inges/ quando existir."""
+    PREVIOUS_LANG_DIR.mkdir(parents=True, exist_ok=True)
+    if not LEGACY_PREVIOUS_LANG_DIR.exists() or not LEGACY_PREVIOUS_LANG_DIR.is_dir():
+        return
+    for item in LEGACY_PREVIOUS_LANG_DIR.iterdir():
+        target = PREVIOUS_LANG_DIR / item.name
+        if target.exists():
+            continue
+        try:
+            shutil.move(str(item), str(target))
+        except Exception:
+            pass
+    try:
+        if not any(LEGACY_PREVIOUS_LANG_DIR.iterdir()):
+            LEGACY_PREVIOUS_LANG_DIR.rmdir()
+    except Exception:
+        pass
 
 # =====================================================================
 # LOGGING
@@ -361,7 +384,7 @@ class TranslationEngine:
                 {"role": "user", "content": user_msg},
             ],
             "stream": False,
-            "options": CFG.get("ollama_options", {"temperature": 0.2, "top_p": 0.9, "num_ctx": 8192}),
+            "options": CFG.get("ollama_options", {"temperature": 0.4, "top_p": 0.9, "num_ctx": 8192}),
         }).encode("utf-8")
         for attempt in range(retries):
             try:
@@ -540,6 +563,8 @@ class PDFTranslator:
             page_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
         except Exception:
             return
+        layout_mode = self._get_layout_mode()
+        image_rects = self._get_page_image_rects(page) if layout_mode == "hybrid" else []
         block_infos = []
         for block in page_dict.get("blocks", []):
             if block.get("type") != 0:
@@ -547,6 +572,7 @@ class PDFTranslator:
             lines = block.get("lines", [])
             if not lines:
                 continue
+            line_texts = self._extract_line_texts(lines)
             block_text = self._extract_block_text(lines).strip()
             if not block_text:
                 continue
@@ -556,6 +582,10 @@ class PDFTranslator:
             if block_rect.width < 5 or block_rect.height < 3:
                 continue
             style = self._get_dominant_style(lines)
+            style["line_count"] = max(1, len(line_texts))
+            style["line_lengths"] = [max(1, len(t.strip())) for t in line_texts if t.strip()] or [max(1, len(block_text))]
+            style["line_height_ratio"] = self._estimate_line_height_ratio(lines, style["size"], block_rect, style["line_count"])
+            style["over_image"] = self._rect_overlaps_any(block_rect, image_rects)
             block_infos.append((block_rect, block_text, style))
         if not block_infos:
             return
@@ -564,6 +594,7 @@ class PDFTranslator:
         changes = []
         for i, (rect, orig, style) in enumerate(block_infos):
             trans = translated_texts[i] if i < len(translated_texts) else orig
+            trans = self._adapt_text_layout(trans, orig, style, layout_mode)
             if trans and trans != orig:
                 changes.append((rect, trans, style))
         if not changes:
@@ -572,9 +603,10 @@ class PDFTranslator:
             page.add_redact_annot(rect)
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
         for rect, text, style in changes:
-            self._insert_block_text(page, rect, text, style)
+            self._insert_block_text(page, rect, text, style, layout_mode)
 
     def _translate_image_blocks(self, doc: fitz.Document, page: fitz.Page):
+        layout_mode = self._get_layout_mode()
         image_list = page.get_images(full=True)
         if not image_list:
             return
@@ -617,7 +649,11 @@ class PDFTranslator:
                 draw.rectangle([x0, y0, x1, y1], fill=bg)
                 font_size = max(8, int((y1 - y0) * 0.75))
                 pil_font = self._get_pil_font(font_size)
-                self._draw_fitted_text(draw, trans, x0, y0, x1, y1, pil_font, font_size, fill_color=text_color)
+                source_line_count = max(1, len(str(result[1]).splitlines()))
+                self._draw_fitted_text(
+                    draw, trans, x0, y0, x1, y1, pil_font, font_size,
+                    fill_color=text_color, source_line_count=source_line_count, mode=layout_mode,
+                )
                 modified = True
             if modified:
                 buf = io.BytesIO()
@@ -628,6 +664,7 @@ class PDFTranslator:
                     log.warning("Não substituiu imagem xref=%d: %s", xref, e)
 
     def _translate_scanned_page(self, doc, page, page_idx):
+        layout_mode = self._get_layout_mode()
         mat = fitz.Matrix(CFG["render_dpi"] / 72, CFG["render_dpi"] / 72)
         pix = page.get_pixmap(matrix=mat, alpha=False)
         img_bytes = pix.tobytes("png")
@@ -659,7 +696,11 @@ class PDFTranslator:
             draw.rectangle([x0, y0, x1, y1], fill=bg)
             font_size = max(8, int(box_h * 0.78))
             pil_font = self._get_pil_font(font_size)
-            self._draw_fitted_text(draw, trans, x0, y0, x1, y1, pil_font, font_size, fill_color=text_color)
+            source_line_count = max(1, len(str(result[1]).splitlines()))
+            self._draw_fitted_text(
+                draw, trans, x0, y0, x1, y1, pil_font, font_size,
+                fill_color=text_color, source_line_count=source_line_count, mode=layout_mode,
+            )
             modified = True
         if modified:
             buf = io.BytesIO()
@@ -679,6 +720,118 @@ class PDFTranslator:
             if line_text:
                 parts.append(line_text)
         return " ".join(parts)
+
+    def _extract_line_texts(self, lines: list) -> List[str]:
+        results: List[str] = []
+        for line in lines:
+            line_text = "".join(s.get("text", "") for s in line.get("spans", []))
+            line_text = re.sub(r"\s+", " ", line_text).strip()
+            if line_text:
+                results.append(line_text)
+        return results
+
+    @staticmethod
+    def _estimate_line_height_ratio(lines: list, font_size: float, block_rect: fitz.Rect, line_count: int) -> float:
+        heights = []
+        for line in lines:
+            bbox = line.get("bbox")
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                heights.append(max(1.0, float(bbox[3]) - float(bbox[1])))
+        if heights and font_size > 0:
+            avg_height = sum(heights) / len(heights)
+            return max(1.0, min(1.9, avg_height / font_size))
+        if line_count > 0 and font_size > 0:
+            approx = (block_rect.height / line_count) / font_size
+            return max(1.0, min(1.9, approx))
+        return 1.2
+
+    @staticmethod
+    def _get_page_image_rects(page: fitz.Page) -> List[fitz.Rect]:
+        rects: List[fitz.Rect] = []
+        for img in page.get_images(full=True):
+            xref = img[0]
+            try:
+                for r in page.get_image_rects(xref):
+                    rects.append(fitz.Rect(r))
+            except Exception:
+                continue
+        return rects
+
+    @staticmethod
+    def _rect_overlaps_any(rect: fitz.Rect, others: List[fitz.Rect]) -> bool:
+        return any(not (rect & other).is_empty for other in others)
+
+    @staticmethod
+    def _get_layout_mode() -> str:
+        mode = str(CFG.get("validation_method", "structural")).strip().lower()
+        if mode not in {"structural", "char_count", "hybrid"}:
+            return "structural"
+        return mode
+
+    def _adapt_text_layout(self, translated: str, original: str, style: dict, mode: str) -> str:
+        text = re.sub(r"\s+", " ", translated or "").strip()
+        if not text:
+            return original
+
+        line_count = max(1, int(style.get("line_count", 1)))
+        line_lengths = style.get("line_lengths") or [max(1, len(original or text))]
+
+        if mode == "structural":
+            return text
+
+        if mode == "char_count":
+            return self._rewrap_text_with_budgets(
+                text=text,
+                line_count=line_count,
+                line_budgets=line_lengths,
+                expansion=1.05,
+                keep_exact_lines=False,
+            )
+
+        # hybrid: preserva número de linhas do bloco original e mantém texto no mesmo espaço
+        return self._rewrap_text_with_budgets(
+            text=text,
+            line_count=line_count,
+            line_budgets=line_lengths,
+            expansion=1.25,
+            keep_exact_lines=True,
+        )
+
+    @staticmethod
+    def _rewrap_text_with_budgets(text: str, line_count: int, line_budgets: List[int],
+                                  expansion: float, keep_exact_lines: bool) -> str:
+        words = text.split()
+        if not words or line_count <= 1:
+            return text.strip()
+
+        budgets = list(line_budgets[:line_count])
+        if not budgets:
+            budgets = [max(8, len(text) // max(1, line_count))] * line_count
+        while len(budgets) < line_count:
+            budgets.append(budgets[-1])
+        budgets = [max(4, int(b * expansion)) for b in budgets]
+
+        lines = [""] * line_count
+        idx = 0
+        for word in words:
+            if idx >= line_count:
+                lines[-1] = (lines[-1] + " " + word).strip()
+                continue
+            candidate = (lines[idx] + " " + word).strip()
+            if not lines[idx] or len(candidate) <= budgets[idx]:
+                lines[idx] = candidate
+            else:
+                idx += 1
+                if idx >= line_count:
+                    lines[-1] = (lines[-1] + " " + word).strip()
+                else:
+                    lines[idx] = word
+
+        if keep_exact_lines:
+            return "\n".join(lines)
+
+        compact = [ln for ln in lines if ln.strip()]
+        return "\n".join(compact) if compact else text.strip()
 
     def _get_dominant_style(self, lines: list) -> dict:
         styles: Dict[tuple, int] = {}
@@ -701,42 +854,118 @@ class PDFTranslator:
             "flags": best[3],
         }
 
-    def _insert_block_text(self, page, rect, text, style):
+    def _insert_block_text(self, page, rect, text, style, mode: str = "structural"):
         font_name = get_fallback_font(style["font"], style.get("flags", 0))
         original_size = style["size"]
         color = style["color"]
-        min_size = max(CFG["min_font_size"], original_size * CFG["min_font_ratio"])
-        current_size = original_size
-        while current_size >= min_size:
-            rc = page.insert_textbox(
-                rect, text,
-                fontname=font_name, fontsize=current_size,
-                color=color, align=fitz.TEXT_ALIGN_LEFT,
-            )
-            if rc >= 0:
-                return
-            current_size -= 0.5
-        page.insert_textbox(
-            rect, text,
-            fontname=font_name, fontsize=min_size,
-            color=color, align=fitz.TEXT_ALIGN_LEFT,
-        )
+        base_ratio = CFG["min_font_ratio"]
+        if mode == "char_count":
+            base_ratio = min(base_ratio, 0.55)
+        elif mode == "hybrid":
+            base_ratio = min(base_ratio, 0.50)
+        min_size = max(4.0, CFG["min_font_size"], original_size * base_ratio)
+        lineheight = style.get("line_height_ratio", 1.2) if mode == "hybrid" else None
 
-    def _draw_fitted_text(self, draw, text, x0, y0, x1, y1, font, base_size, fill_color="black"):
+        texts_to_try = [text]
+        if mode == "hybrid":
+            compact = re.sub(r"\s+", " ", text).replace(" ,", ",").replace(" .", ".").strip()
+            if compact and compact != text:
+                texts_to_try.append(compact)
+
+        for candidate_text in texts_to_try:
+            current_size = original_size
+            while current_size >= min_size:
+                kwargs = {
+                    "fontname": font_name,
+                    "fontsize": current_size,
+                    "color": color,
+                    "align": fitz.TEXT_ALIGN_LEFT,
+                }
+                if lineheight is not None:
+                    kwargs["lineheight"] = lineheight
+                rc = page.insert_textbox(rect, candidate_text, **kwargs)
+                if rc >= 0:
+                    return
+                current_size -= 0.5
+
+        fallback_kwargs = {
+            "fontname": font_name,
+            "fontsize": min_size,
+            "color": color,
+            "align": fitz.TEXT_ALIGN_LEFT,
+        }
+        if lineheight is not None:
+            fallback_kwargs["lineheight"] = lineheight
+        page.insert_textbox(rect, texts_to_try[-1], **fallback_kwargs)
+
+    def _draw_fitted_text(self, draw, text, x0, y0, x1, y1, font, base_size,
+                          fill_color="black", source_line_count: int = 1, mode: str = "structural"):
         box_w = x1 - x0
         box_h = y1 - y0
         current_size = base_size
         while current_size >= 6:
             test_font = self._get_pil_font(current_size)
-            bbox = draw.textbbox((0, 0), text, font=test_font)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            if tw <= box_w * 1.05 and th <= box_h * 1.1:
-                draw.text((x0 + 1, y0), text, fill=fill_color, font=test_font)
+            lines = self._layout_image_text(
+                draw=draw,
+                text=text,
+                font=test_font,
+                max_width=box_w,
+                target_lines=max(1, source_line_count),
+                mode=mode,
+            )
+            if not lines:
+                current_size -= 1
+                continue
+
+            max_w = max(draw.textlength(line, font=test_font) for line in lines)
+            line_h_bbox = draw.textbbox((0, 0), "Ag", font=test_font)
+            line_h = max(1, (line_h_bbox[3] - line_h_bbox[1]))
+            spacing = max(1, int(current_size * 0.15))
+            total_h = len(lines) * line_h + (len(lines) - 1) * spacing
+
+            if max_w <= box_w * 1.05 and total_h <= box_h * 1.1:
+                start_y = y0
+                if mode == "hybrid" and total_h < box_h:
+                    start_y = y0 + max(0, (box_h - total_h) / 2)
+                y_cursor = start_y
+                for line in lines:
+                    draw.text((x0 + 1, y_cursor), line, fill=fill_color, font=test_font)
+                    y_cursor += line_h + spacing
                 return
             current_size -= 1
         tiny_font = self._get_pil_font(max(6, current_size))
         draw.text((x0 + 1, y0), text, fill=fill_color, font=tiny_font)
+
+    @staticmethod
+    def _layout_image_text(draw, text: str, font, max_width: float, target_lines: int, mode: str) -> List[str]:
+        words = text.split()
+        if not words:
+            return [text]
+
+        lines: List[str] = []
+        current = ""
+        for word in words:
+            candidate = (current + " " + word).strip()
+            if not current or draw.textlength(candidate, font=font) <= max_width * 1.02:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+
+        if mode == "hybrid":
+            while len(lines) > target_lines and len(lines) > 1:
+                lines[-2] = (lines[-2] + " " + lines[-1]).strip()
+                lines.pop()
+            while len(lines) < target_lines:
+                idx = max(range(len(lines)), key=lambda i: len(lines[i]))
+                parts = lines[idx].split()
+                if len(parts) < 2:
+                    break
+                cut = len(parts) // 2
+                lines[idx:idx + 1] = [" ".join(parts[:cut]), " ".join(parts[cut:])]
+        return lines
 
     @staticmethod
     def _int_to_rgb(color) -> tuple:
@@ -806,6 +1035,7 @@ class PDFTranslator:
 
 class TranslationPipeline:
     def __init__(self):
+        ensure_previous_lang_dir()
         for d in (INPUT_DIR, TRANSLATING_DIR, OUTPUT_DIR, ENGLISH_DIR):
             d.mkdir(parents=True, exist_ok=True)
         self.translator = TranslationEngine()
@@ -891,8 +1121,8 @@ class TranslationPipeline:
         log.info("=" * 60)
 
     def _retranslate_single(self, filename: str):
-        """Retraduz um único livro (move de traduzidos/em-inges de volta)."""
-        # Procurar o original em em-inges/
+        """Retraduz um único livro (move de traduzidos/na-lingua-anterior de volta)."""
+        # Procurar o original em na-lingua-anterior/
         orig = ENGLISH_DIR / filename
         if not orig.exists():
             # Talvez o arquivo esteja em traduzidos com nome PT
@@ -996,7 +1226,7 @@ class TranslationPipeline:
 
         english_path = ENGLISH_DIR / pdf_path.name
         shutil.move(str(working_path), str(english_path))
-        log.info("  -> Original -> em-inges/")
+        log.info("  -> Original -> na-lingua-anterior/")
         self._cleanup_translating_dir()
         # Remove from retranslate queue if present
         rq = CFG.get("retranslate_queue", [])

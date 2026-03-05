@@ -21,8 +21,14 @@ python-portable/
 # Pastas de PDFs do usuário (criadas pós-instalação)
 ../livros-para-traduzir/
 ../traduzidos/
+../na-lingua-anterior/
 ../em-inges/
 ../traduzindo/
+livros-para-traduzir/
+traduzidos/
+na-lingua-anterior/
+em-inges/
+traduzindo/
 
 # Arquivos de log
 *.log

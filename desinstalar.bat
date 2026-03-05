@@ -32,7 +32,7 @@ echo  ℹ️  NÃO serão removidos:
 echo.
 echo     • PDFs na fila (livros-para-traduzir)
 echo     • PDFs traduzidos (traduzidos)
-echo     • PDFs originais salvos (em-inges)
+echo     • PDFs originais salvos (na-lingua-anterior)
 echo     • Ollama (instalado separadamente no sistema)
 echo.
 echo ═══════════════════════════════════════════════════════════════
@@ -181,9 +181,9 @@ if /i "!REMOVE_PDFS!"=="S" (
         rmdir /S /Q "%BASE_DIR%\traduzidos" >nul 2>&1
         echo    ✅ PDFs traduzidos removidos
     )
-    if exist "%BASE_DIR%\em-inges" (
-        rmdir /S /Q "%BASE_DIR%\em-inges" >nul 2>&1
-        echo    ✅ Originais em inglês removidos
+    if exist "%BASE_DIR%\na-lingua-anterior" (
+        rmdir /S /Q "%BASE_DIR%\na-lingua-anterior" >nul 2>&1
+        echo    ✅ Originais na lingua anterior removidos
     )
     echo.
 ) else (

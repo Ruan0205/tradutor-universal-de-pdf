@@ -10,7 +10,7 @@
   "sort_order": "smallest_first",
   "custom_order": [],
   "ollama_options": {
-    "temperature": 0.2,
+    "temperature": 0.4,
     "top_p": 0.9,
     "num_ctx": 8192
   },

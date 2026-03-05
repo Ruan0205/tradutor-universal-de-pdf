@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title Tradutor Universal de PDF v1.7
+title Tradutor Universal de PDF v1.8
 
 set "NOPAUSE=0"
 for %%A in (%*) do (
@@ -12,21 +12,25 @@ call :set_paths
 
 echo.
 echo ================================================================
-echo   TRADUTOR UNIVERSAL DE PDF v1.7
+echo   TRADUTOR UNIVERSAL DE PDF v1.8
 echo ================================================================
 echo.
 
 call :find_python
 if !errorlevel! neq 0 goto :python_missing
 
-echo Iniciando sistema com Python:
-echo !PYTHON_EXE!
-echo.
+set "PYTHONW_EXE=!PYTHON_EXE:python.exe=pythonw.exe!"
+if exist "!PYTHONW_EXE!" (
+    start "" "!PYTHONW_EXE!" "!PROJECT_DIR!\iniciar.py" --tray
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -WindowStyle Hidden -FilePath '!PYTHON_EXE!' -ArgumentList '\"!PROJECT_DIR!\\iniciar.py\"','--tray'"
+)
 
-"!PYTHON_EXE!" "!PROJECT_DIR!\iniciar.py"
-if !errorlevel! neq 0 goto :run_error
-
-if "!NOPAUSE!"=="0" pause
+if "!NOPAUSE!"=="0" (
+    echo Sistema iniciado em segundo plano.
+    echo Dashboard: http://localhost:8050/
+    timeout /t 2 >nul
+)
 exit /b 0
 
 :set_paths
