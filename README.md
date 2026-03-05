@@ -102,69 +102,63 @@
 
 ---
 
-## 🚀 Como Usar
+## 🚀 Como Instalar e Usar
 
-### Pré-requisitos
-1. **Python 3.11+** instalado
-2. **Ollama** instalado e rodando em `http://localhost:11434`
-3. Um modelo de tradução instalado no Ollama (ex: `ollama pull translategemmma`)
+### ✅ Instalação recomendada (Windows)
 
-### Instalação
+1. Baixe/clone o projeto.
+2. Clique com o botão direito em `instalador.bat`.
+3. Execute como **Administrador**.
+4. Aguarde a conclusão.
+
+O instalador faz automaticamente:
+- instala/configura Python portável (quando necessário);
+- cria o ambiente virtual;
+- instala dependências Python;
+- verifica/instala Ollama;
+- baixa automaticamente o modelo `translategemmma` (com fallback para `translategemma`);
+- cria as pastas de trabalho do projeto.
+
+### ▶ Execução diária
+
+1. Execute `iniciar.bat`.
+2. O dashboard abre automaticamente no navegador.
+3. Coloque os PDFs em `livros-para-traduzir`.
+4. Clique em **Iniciar** no dashboard.
+
+### 📁 Estrutura atual do projeto
+
+```
+tradutor-universal-de-pdf/
+├── iniciar.bat
+├── instalador.bat
+├── iniciar.py
+├── engine/
+│   ├── pipeline.py
+│   ├── validator.py
+│   ├── server.py
+│   ├── config.json
+│   └── static/index.html
+├── python-portable/                 # criado automaticamente quando necessário
+└── (na pasta pai)
+  ├── .venv/
+  ├── livros-para-traduzir/
+  ├── traduzindo/
+  ├── traduzidos/
+  └── em-inges/
+```
+
+### 🧩 Instalação manual (somente se precisar)
+
+Se o `instalador.bat` não puder ser usado, você pode instalar manualmente:
 
 ```bash
-# 1. Clone ou copie o projeto
-git clone <url-do-repositório>
-cd tradutor-universal-de-pdfs
-
-# 2. Crie um ambiente virtual
 python -m venv .venv
-
-# 3. Ative o ambiente virtual
-# Windows:
 .venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
-
-# 4. Instale as dependências
-pip install PyMuPDF Pillow rapidocr-onnxruntime
+pip install --upgrade pip
+pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm
+ollama pull translategemmma
 ```
-
-### Estrutura de Pastas
-
-```
-projeto/
-├── tradutor-universal-de-pdf/        # Código do projeto
-│   ├── iniciar.py                    # Launcher (inicia tudo)
-│   ├── iniciar.bat                   # Atalho Windows
-│   └── engine/
-│       ├── pipeline.py               # Motor de tradução
-│       ├── validator.py              # Motor de validação
-│       ├── server.py                 # Servidor web + API
-│       ├── config.json               # Configurações
-│       └── static/
-│           └── index.html            # Dashboard (SPA)
-├── livros-para-traduzir/             # ← Coloque os PDFs aqui
-├── traduzindo/                       # Livro sendo processado
-├── traduzidos/                       # ← Livros traduzidos saem aqui
-├── em-inges/                         # Originais após tradução
-└── .venv/                            # Ambiente virtual Python
-```
-
-### Executando
-
-```bash
-# Opção 1: Pelo launcher
-python tradutor-universal-de-pdf/iniciar.py
-
-# Opção 2: Windows — duplo clique em iniciar.bat
-```
-
-O dashboard abre automaticamente em `http://localhost:8050`.
-
-1. Coloque os PDFs em inglês na pasta `livros-para-traduzir/`
-2. Clique em **▶ Iniciar** no dashboard
-3. Acompanhe o progresso em tempo real
-4. Livros traduzidos aparecem em `traduzidos/`
 
 ---
 
