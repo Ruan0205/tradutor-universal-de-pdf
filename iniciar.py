@@ -21,7 +21,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENGINE_DIR = SCRIPT_DIR / "engine"
-BASE_DIR = SCRIPT_DIR.parent  # testecode/
+BASE_DIR = SCRIPT_DIR
 VENV_DIR = BASE_DIR / ".venv"
 PYTHON_PORTABLE_DIR = SCRIPT_DIR / "python-portable"
 PYTHON_CONFIG_FILE = ENGINE_DIR / ".python_path"

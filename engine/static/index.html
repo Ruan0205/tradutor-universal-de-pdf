@@ -983,8 +983,9 @@ function renderDashboard() {
   document.getElementById('etaFinish').textContent = s.finish_time || '--';
   document.getElementById('etaSpeed').textContent = s.sec_per_mb ? `${s.sec_per_mb} s/MB` : '--';
   // Tempo Total Gasto: inclui livro atual em progresso
-  const totalElapsed = s.total_elapsed_sec || s.pipeline_elapsed_sec || s.total_time_sec;
-  document.getElementById('etaTotalTime').textContent = totalElapsed ? fmtDur(totalElapsed) : '--';
+  const totalElapsed = [s.total_elapsed_sec, s.pipeline_elapsed_sec, s.total_time_sec]
+    .find(v => Number.isFinite(v));
+  document.getElementById('etaTotalTime').textContent = Number.isFinite(totalElapsed) ? fmtDur(totalElapsed) : '--';
 
   // Current book
   const cur = st.current_book;
@@ -994,7 +995,7 @@ function renderDashboard() {
     const totalPages = st.total_pages || 1;
     const curPctBook = totalPages > 0 ? Math.round(curPage / totalPages * 100) : 0;
     const elapsed = s.current_elapsed_sec;
-    const elStr = elapsed ? fmtDur(elapsed) : '--';
+    const elStr = Number.isFinite(elapsed) ? fmtDur(elapsed) : '--';
     area.innerHTML = `
       <div class="current-book">
         <div class="name">📖 ${cur.filename || '--'}</div>
@@ -1395,7 +1396,7 @@ function getDragAfterElement(container, y) {
 // UTILITIES
 // =============================================
 function fmtDur(sec) {
-  if (!sec || sec < 0) return '--';
+  if (!Number.isFinite(sec) || sec < 0) return '--';
   sec = Math.round(sec);
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);

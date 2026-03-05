@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlparse, unquote
 
 ENGINE_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = ENGINE_DIR.parent
-BASE_DIR = PROJECT_DIR.parent  # testecode/
+BASE_DIR = PROJECT_DIR
 STATIC_DIR = ENGINE_DIR / "static"
 
 CONFIG_FILE = ENGINE_DIR / "config.json"
@@ -45,7 +45,7 @@ TRANSLATING_DIR = BASE_DIR / "traduzindo"
 OUTPUT_DIR = BASE_DIR / "traduzidos"
 ENGLISH_DIR = BASE_DIR / "em-inges"
 
-PYTHON_EXE = str(BASE_DIR / ".venv" / "Scripts" / "python.exe")
+PYTHON_EXE = str(PROJECT_DIR / ".venv" / "Scripts" / "python.exe")
 PIPELINE_SCRIPT = str(ENGINE_DIR / "pipeline.py")
 VALIDATOR_SCRIPT = str(ENGINE_DIR / "validator.py")
 

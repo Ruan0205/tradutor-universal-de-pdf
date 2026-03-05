@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ENGINE_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = ENGINE_DIR.parent
-BASE_DIR = PROJECT_DIR.parent  # testecode/
+BASE_DIR = PROJECT_DIR
 
 CONFIG_FILE = ENGINE_DIR / "config.json"
 CONTROL_FILE = ENGINE_DIR / "pipeline_control.json"

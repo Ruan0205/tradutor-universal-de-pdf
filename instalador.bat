@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
 :: ============================================================================
 :: INSTALADOR AUTOMÁTICO - TRADUTOR UNIVERSAL DE PDF
@@ -14,11 +14,12 @@ setlocal enabledelayedexpansion
 
 title Instalador - Tradutor Universal de PDF
 
-:: Previne o fechamento imediato em caso de erro
-if "%1"=="nopause" (
-    set NOPAUSE=1
-) else (
-    set NOPAUSE=0
+:: Argumentos de execução
+set "NOPAUSE=0"
+set "ALREADY_ELEVATED=0"
+for %%A in (%*) do (
+    if /i "%%~A"=="nopause" set "NOPAUSE=1"
+    if /i "%%~A"=="elevated" set "ALREADY_ELEVATED=1"
 )
 
 cls
@@ -43,20 +44,41 @@ echo ═════════════════════════
 echo.
 echo    Preparando instalação...
 echo.
-pause
+if "%NOPAUSE%"=="0" pause
 echo.
+
+:: Autoelevação para evitar falha silenciosa em máquinas sem privilégios
+net session >nul 2>&1
+if errorlevel 1 (
+    if "%ALREADY_ELEVATED%"=="1" (
+        echo ⚠️  Executando sem privilégios de administrador.
+        echo    Algumas instalações globais podem falhar, mas o modo portátil continuará.
+    ) else (
+        echo ⏳ Solicitando permissões de administrador...
+        set "RELAUNCH_ARGS=elevated"
+        if "%NOPAUSE%"=="1" set "RELAUNCH_ARGS=!RELAUNCH_ARGS! nopause"
+
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs -ArgumentList '!RELAUNCH_ARGS!'"
+        if not errorlevel 1 (
+            exit /b 0
+        )
+
+        echo ⚠️  Permissão de administrador negada. Continuando sem admin...
+        echo    O instalador tentará completar tudo em modo portátil.
+    )
+)
 
 :: Muda para o diretório do script
 cd /d "%~dp0"
 set "PROJECT_DIR=%~dp0"
-set "BASE_DIR=%PROJECT_DIR%.."
-set "VENV_DIR=%BASE_DIR%\.venv"
+set "BASE_DIR=%PROJECT_DIR%"
+set "VENV_DIR=%PROJECT_DIR%\.venv"
 set "PYTHON_INSTALLER=%TEMP%\python-installer.exe"
 set "PYTHON_PORTABLE_DIR=%PROJECT_DIR%python-portable"
 set "PYTHON_EMBEDDED_ZIP=%TEMP%\python-embedded.zip"
 set "PYTHON_VERSION=3.11.9"
-set "OLLAMA_MODEL_PRIMARY=translategemmma"
-set "OLLAMA_MODEL_FALLBACK=translategemma"
+set "OLLAMA_MODEL_PRIMARY=translategemma"
+set "OLLAMA_MODEL_FALLBACK=TranslateGemma"
 set "OLLAMA_EXE=ollama"
 
 :: ============================================================================
@@ -162,7 +184,7 @@ if not exist "%PYTHON_EMBEDDED_ZIP%" (
     echo    %PYTHON_EMBEDDED_URL%
     echo.
     echo    Extraia para: %PYTHON_PORTABLE_DIR%
-    pause
+    if "%NOPAUSE%"=="0" pause
     exit /b 1
 )
 
@@ -273,7 +295,7 @@ if exist "%VENV_DIR%\Scripts\python.exe" (
         echo    1. Execute este script como ADMINISTRADOR
         echo    2. Desinstale o Python atual e execute novamente
         echo    3. Verifique se há espaço em disco suficiente
-        pause
+        if "%NOPAUSE%"=="0" pause
         exit /b 1
     )
 )
@@ -384,10 +406,10 @@ echo ⏳ Baixando modelo do Ollama automaticamente...
 echo    Modelo solicitado: %OLLAMA_MODEL_PRIMARY%
 
 "%OLLAMA_EXE%" pull %OLLAMA_MODEL_PRIMARY%
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo ⚠️  Falha ao baixar '%OLLAMA_MODEL_PRIMARY%'. Tentando fallback '%OLLAMA_MODEL_FALLBACK%'...
     "%OLLAMA_EXE%" pull %OLLAMA_MODEL_FALLBACK%
-    if %errorlevel% neq 0 (
+    if errorlevel 1 (
         echo ⚠️  Não foi possível baixar o modelo automaticamente agora.
         echo    Execute depois manualmente:
         echo    "%OLLAMA_EXE%" pull %OLLAMA_MODEL_PRIMARY%
@@ -410,10 +432,10 @@ echo.
 echo [5/5] Criando estrutura de pastas...
 echo.
 
-if not exist "%BASE_DIR%\livros-para-traduzir" mkdir "%BASE_DIR%\livros-para-traduzir"
-if not exist "%BASE_DIR%\traduzidos" mkdir "%BASE_DIR%\traduzidos"
-if not exist "%BASE_DIR%\em-inges" mkdir "%BASE_DIR%\em-inges"
-if not exist "%BASE_DIR%\traduzindo" mkdir "%BASE_DIR%\traduzindo"
+if not exist "%PROJECT_DIR%\livros-para-traduzir" mkdir "%PROJECT_DIR%\livros-para-traduzir"
+if not exist "%PROJECT_DIR%\traduzidos" mkdir "%PROJECT_DIR%\traduzidos"
+if not exist "%PROJECT_DIR%\em-inges" mkdir "%PROJECT_DIR%\em-inges"
+if not exist "%PROJECT_DIR%\traduzindo" mkdir "%PROJECT_DIR%\traduzindo"
 
 echo ✅ Estrutura de pastas criada
 echo.
@@ -435,6 +457,6 @@ echo    4. Clique em "Iniciar" no dashboard
 echo.
 echo ═══════════════════════════════════════════════════════════════
 echo.
-pause
+if "%NOPAUSE%"=="0" pause
 
 exit /b 0

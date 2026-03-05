@@ -116,7 +116,7 @@ O instalador faz automaticamente:
 - cria o ambiente virtual;
 - instala dependências Python;
 - verifica/instala Ollama;
-- baixa automaticamente o modelo `translategemmma` (com fallback para `translategemma`);
+- baixa automaticamente o modelo `translategemma` (com fallback para `TranslateGemma`);
 - cria as pastas de trabalho do projeto.
 
 ### ▶ Execução diária
@@ -139,13 +139,12 @@ tradutor-universal-de-pdf/
 │   ├── server.py
 │   ├── config.json
 │   └── static/index.html
+├── .venv/                           # criado automaticamente
 ├── python-portable/                 # criado automaticamente quando necessário
-└── (na pasta pai)
-  ├── .venv/
-  ├── livros-para-traduzir/
-  ├── traduzindo/
-  ├── traduzidos/
-  └── em-inges/
+├── livros-para-traduzir/
+├── traduzindo/
+├── traduzidos/
+└── em-inges/
 ```
 
 ### 🧩 Instalação manual (somente se precisar)
@@ -157,7 +156,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install --upgrade pip
 pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm
-ollama pull translategemmma
+ollama pull translategemma
 ```
 
 ---

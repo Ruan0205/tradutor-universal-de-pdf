@@ -26,8 +26,8 @@ echo.
 cd /d "%~dp0"
 
 set "PROJECT_DIR=%~dp0"
-set "BASE_DIR=%PROJECT_DIR%.."
-set "VENV_DIR=%BASE_DIR%\.venv"
+set "BASE_DIR=%PROJECT_DIR%"
+set "VENV_DIR=%PROJECT_DIR%\.venv"
 set "PYTHON_EXE="
 set "PYTHON_CONFIG=%PROJECT_DIR%engine\.python_path"
 

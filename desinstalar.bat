@@ -18,7 +18,7 @@ echo.
 :: Muda para o diretório do script
 cd /d "%~dp0"
 set "PROJECT_DIR=%~dp0"
-set "BASE_DIR=%PROJECT_DIR%.."
+set "BASE_DIR=%PROJECT_DIR%"
 
 echo  ⚠️  ATENÇÃO: Este processo irá remover:
 echo.

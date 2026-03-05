@@ -18,7 +18,7 @@ import fitz
 
 ENGINE_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = ENGINE_DIR.parent
-BASE_DIR = PROJECT_DIR.parent
+BASE_DIR = PROJECT_DIR
 
 CONFIG_FILE = ENGINE_DIR / "config.json"
 OUTPUT_DIR = BASE_DIR / "traduzidos"
