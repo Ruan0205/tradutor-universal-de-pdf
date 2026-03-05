@@ -169,3 +169,55 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 ---
 
 *Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.0*
+
+## 🙏 Créditos e Reconhecimentos
+
+Este projeto só foi possível graças ao trabalho incrível das seguintes equipes e projetos open-source:
+
+### Inteligência Artificial e Tradução
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **Ollama** | Jeffrey Morgan e equipe | [github.com/ollama/ollama](https://github.com/ollama/ollama) |
+| **TranslateGemma** | Google DeepMind | [ai.google.dev/gemma](https://ai.google.dev/gemma) |
+
+### Processamento de PDF
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **PyMuPDF (fitz)** | Artifex Software, Inc. | [github.com/pymupdf/PyMuPDF](https://github.com/pymupdf/PyMuPDF) |
+| **MuPDF** | Artifex Software, Inc. | [mupdf.com](https://mupdf.com/) |
+
+### OCR (Reconhecimento Óptico de Caracteres)
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **RapidOCR** | RapidAI Community | [github.com/RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR) |
+| **PaddleOCR** | Baidu Inc. | [github.com/PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) |
+| **ONNX Runtime** | Microsoft | [github.com/microsoft/onnxruntime](https://github.com/microsoft/onnxruntime) |
+
+### Interface Web e Dashboard
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **Tailwind CSS** | Adam Wathan e equipe | [tailwindcss.com](https://tailwindcss.com/) |
+| **PDF.js** | Mozilla Foundation | [github.com/nicbarker/libpdf](https://mozilla.github.io/pdf.js/) |
+
+### Linguagem e Runtime
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **Python** | Python Software Foundation | [python.org](https://www.python.org/) |
+| **Pillow (PIL)** | Jeffrey A. Clark (Alex) e contribuidores | [github.com/python-pillow/Pillow](https://github.com/python-pillow/Pillow) |
+| **NumPy** | NumPy Community | [numpy.org](https://numpy.org/) |
+
+### Desenvolvimento
+| Projeto | Criadores | Link |
+|---------|-----------|------|
+| **Visual Studio Code** | Microsoft | [code.visualstudio.com](https://code.visualstudio.com/) |
+| **GitHub Copilot (Claude Opus 4.6)** | Anthropic / GitHub | [github.com/features/copilot](https://github.com/features/copilot) |
+
+---
+
+> **Nota:** Este projeto é uma ferramenta de integração que conecta e orquestra essas tecnologias.
+> Todo o mérito das tecnologias base pertence aos seus respectivos criadores e comunidades.
+> Se você utiliza este projeto, considere também apoiar e dar ⭐ nos repositórios listados acima.
+
+---
+
+**Desenvolvido por Ruan** utilizando **GitHub Copilot com Claude Opus 4.6** como assistente de desenvolvimento.
