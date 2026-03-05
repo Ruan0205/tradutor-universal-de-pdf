@@ -1,0 +1,55 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║            📚 TRADUTOR UNIVERSAL DE PDF - INÍCIO RÁPIDO 📚          ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+
+⚡ SE É SUA PRIMEIRA VEZ:
+═══════════════════════════════════════════════════════════════════════
+
+   1. Clique com BOTÃO DIREITO no arquivo "instalador.bat"
+   
+   2. Selecione "Executar como administrador"
+   
+   3. Aguarde a instalação completar (5-10 minutos)
+   
+   4. Pronto! Agora execute "iniciar.bat" normalmente
+
+
+🚀 PARA USAR DEPOIS DE INSTALADO:
+═══════════════════════════════════════════════════════════════════════
+
+   1. Duplo clique em "iniciar.bat"
+   
+   2. Dashboard abre automaticamente no navegador
+   
+   3. Coloque PDFs na pasta "livros-para-traduzir"
+   
+   4. Clique "Iniciar" no dashboard
+   
+   5. Aguarde - os PDFs traduzidos aparecerão em "traduzidos"
+
+
+❓ PROBLEMAS?
+═══════════════════════════════════════════════════════════════════════
+
+   • "Python não encontrado" → Execute o instalador.bat como admin
+   
+   • "WindowsApps" ou "Microsoft Store" → Execute o instalador.bat
+     (Ele instala Python REAL e ignora o alias falso do Windows)
+   
+   • "Ollama não encontrado" → Execute o instalador.bat como admin
+   
+   • Erro ao criar ambiente → Execute o instalador.bat como admin
+   
+   • Leia o arquivo "LEIA-ME.txt" para mais detalhes
+
+
+💡 PORTABILIDADE: Após instalar, você pode copiar TODO O PROJETO
+   para outro PC e funcionará imediatamente (só precisa do Ollama)!
+
+
+═══════════════════════════════════════════════════════════════════════
+              📖 Leia "LEIA-ME.txt" para instruções completas
+═══════════════════════════════════════════════════════════════════════

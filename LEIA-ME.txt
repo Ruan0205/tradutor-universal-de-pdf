@@ -1,0 +1,272 @@
+═══════════════════════════════════════════════════════════════════════════
+                   📚 TRADUTOR UNIVERSAL DE PDF 📚
+                Sistema de Tradução Automática com IA - Ollama
+═══════════════════════════════════════════════════════════════════════════
+
+⚡ INÍCIO RÁPIDO
+═══════════════════════════════════════════════════════════════════════════
+
+🔧 PRIMEIRA INSTALAÇÃO (Execute apenas UMA vez):
+
+   1. Clique com BOTÃO DIREITO no arquivo "instalador.bat"
+   2. Selecione "Executar como administrador"
+   3. Aguarde a instalação completar (pode demorar alguns minutos)
+   
+   O instalador irá:
+   ✓ Baixar e instalar Python 3.11 PORTÁVEL dentro do projeto
+   ✓ Criar ambiente virtual isolado
+   ✓ Instalar todos os pacotes Python necessários
+   ✓ Oferecer instalação do Ollama (IA de tradução)
+   ✓ Criar estrutura de pastas do projeto
+   
+   🎯 VANTAGEM: Python portável significa que você pode COPIAR A PASTA
+      INTEIRA do projeto para outro computador e funcionará imediatamente!
+
+---
+
+🚀 USO DIÁRIO (Depois da instalação):
+
+   1. Clique duas vezes em "iniciar.bat"
+      (Não precisa ser como administrador)
+   2. O dashboard será aberto automaticamente no navegador
+   3. Coloque seus PDFs na pasta "livros-para-traduzir"
+   4. Clique em "Iniciar" no dashboard
+   5. Aguarde a tradução completar
+
+
+═══════════════════════════════════════════════════════════════════════════
+📁 ESTRUTURA DE PASTAS
+═══════════════════════════════════════════════════════════════════════════
+
+tradutor-universal-de-pdf/
+│
+├── iniciar.bat              ← Execute este para iniciar o sistema
+├── instalador.bat           ← Execute COMO ADMIN na primeira vez
+├── iniciar.py              ← Script Python principal
+├── LEIA-ME.txt             ← Este arquivo
+│
+├── python-portable/         ← Python portável (criado pelo instalador)
+│   └── python.exe          ← Executável Python independente
+│
+├── engine/                  ← Código do sistema
+│   ├── server.py           ← Servidor web
+│   ├── pipeline.py         ← Pipeline de tradução
+│   ├── validator.py        ← Validador de PDFs
+│   ├── .python_path        ← Caminho salvo do Python (auto-gerado)
+│   └── static/             ← Interface web
+│
+../
+├── .venv/                   ← Ambiente virtual Python (criado automaticamente)
+├── livros-para-traduzir/   ← COLOQUE SEUS PDFs AQUI
+├── traduzindo/             ← PDFs sendo processados
+├── traduzidos/             ← PDFs traduzidos (resultado final)
+└── em-inges/               ← PDFs originais em inglês
+
+
+═══════════════════════════════════════════════════════════════════════════
+🚀 PORTABILIDADE - COPIE PARA QUALQUER PC!
+═══════════════════════════════════════════════════════════════════════════
+
+✅ ESTE PROJETO É 100% PORTÁVEL!
+
+   Após instalar usando o "instalador.bat", você pode:
+   
+   1. Copiar a PASTA INTEIRA do projeto para um PenDrive/HD Externo
+   2. Levar para outro computador Windows
+   3. Executar diretamente "iniciar.bat" - funciona na hora!
+   
+   O que é copiado junto:
+   • Python portável (pasta python-portable/)
+   • Ambiente virtual com todas as bibliotecas (.venv/)
+   • Todos os PDFs e traduções
+   • Configurações salvas
+   
+   ⚠️  APENAS O OLLAMA precisa ser instalado no computador de destino
+      (Se não tiver, o sistema pedirá para instalar)
+
+
+═══════════════════════════════════════════════════════════════════════════
+⚙️ REQUISITOS DO SISTEMA
+═══════════════════════════════════════════════════════════════════════════
+
+Sistema Operacional:
+  • Windows 10 ou superior
+  • Permissões de Administrador (apenas para instalação)
+
+Hardware Mínimo:
+  • Processador: CPU 64-bit
+  • RAM: 8 GB (recomendado 16 GB)
+  • Espaço em disco: 10 GB livres
+  • Conexão com internet (para download de dependências e modelos IA)
+
+Software (Instalado automaticamente):
+  ✓ Python 3.11.x
+  ✓ PyMuPDF (manipulação de PDFs)
+  ✓ Pillow (processamento de imagens)
+  ✓ RapidOCR (reconhecimento óptico de caracteres)
+  ✓ tqdm (barras de progresso)
+  ✓ Ollama (motor de IA para tradução)
+
+
+═══════════════════════════════════════════════════════════════════════════
+❓ RESOLUÇÃO DE PROBLEMAS
+═══════════════════════════════════════════════════════════════════════════
+
+🔴 PROBLEMA: "Python não foi encontrado"
+
+   SOLUÇÃO:
+   1. Execute o "instalador.bat" como ADMINISTRADOR
+   2. Ele instalará automaticamente um Python PORTÁVEL no projeto
+   3. Se o erro persistir após instalar, veja o próximo problema
+
+---
+
+🔴 PROBLEMA: Erro "WindowsApps" ou "Microsoft Store"
+
+   CAUSA: Windows tem um alias falso de Python que redireciona para a loja
+   
+   SOLUÇÃO AUTOMÁTICA:
+   1. Execute o "instalador.bat" como ADMINISTRADOR
+   2. Ele instalará Python real e ignorará o alias falso
+   
+   SOLUÇÃO MANUAL (se preferir):
+   1. Vá em: Configurações > Aplicativos > Recursos opcionais
+   2. Procure "Aliases de execução do aplicativo"
+   3. DESATIVE os aliases de "python.exe" e "python3.exe"
+   4. Execute o instalador.bat novamente
+
+---
+
+🔴 PROBLEMA: "Ollama não encontrado"
+
+   SOLUÇÃO:
+   1. Execute o "instalador.bat" como ADMINISTRADOR
+      (Ele oferece instalar o Ollama automaticamente)
+   2. Ou baixe e instale manualmente de:
+      https://ollama.com/download
+
+---
+
+🔴 PROBLEMA: "Erro ao criar ambiente virtual"
+
+   SOLUÇÃO:
+   1. Certifique-se de estar executando como ADMINISTRADOR
+   2. Verifique se há espaço em disco suficiente (mín. 10 GB)
+   3. Desative temporariamente o antivírus
+   4. Execute: instalador.bat
+
+---
+
+🔴 PROBLEMA: Dashboard não abre no navegador
+
+   SOLUÇÃO:
+   1. Verifique se o Ollama está rodando
+   2. Abra manualmente: http://localhost:5000
+      (A porta pode variar, veja no console)
+   3. Verifique se o firewall não está bloqueando
+
+---
+
+🔴 PROBLEMA: Tradução muito lenta ou trava
+
+   SOLUÇÃO:
+   1. Verifique se o modelo de IA foi baixado:
+      - Abra um terminal
+      - Execute: ollama list
+   2. Se não aparecer "translategemma", baixe-o:
+      - Execute: ollama pull translategemma
+   3. Feche outros programas para liberar RAM
+
+
+═══════════════════════════════════════════════════════════════════════════
+📖 COMO USAR - PASSO A PASSO DETALHADO
+═══════════════════════════════════════════════════════════════════════════
+
+PASSO 1: Preparar seus PDFs
+   • Os PDFs devem estar em INGLÊS
+   • Não use PDFs protegidos por senha
+   • PDFs com texto são melhores que PDFs escaneados (mas ambos funcionam)
+   • Coloque na pasta: "livros-para-traduzir/"
+
+PASSO 2: Iniciar o sistema
+   • Execute "iniciar.bat" (duplo clique)
+   • Aguarde o dashboard abrir no navegador
+   • Se não abrir automaticamente, vá para: http://localhost:5000
+
+PASSO 3: Configurar tradução (no dashboard)
+   • Selecione o PDF para traduzir
+   • Escolha o modelo de IA (TranslateGemma recomendado)
+   • Configure opções avançadas se necessário
+   • Clique em "Iniciar Tradução"
+
+PASSO 4: Acompanhar progresso
+   • O dashboard mostra progresso em tempo real
+   • Você pode ver logs detalhados
+   • Barras de progresso mostram páginas traduzidas
+
+PASSO 5: Resultado
+   • PDF traduzido estará em: "traduzidos/"
+   • PDF original movido para: "em-inges/"
+   • Logs de validação em: "validation_report.log"
+
+
+═══════════════════════════════════════════════════════════════════════════
+⚡ DICAS E BOAS PRÁTICAS
+═══════════════════════════════════════════════════════════════════════════
+
+✓ Execute a primeira instalação com o computador conectado à internet
+✓ Feche programas pesados antes de traduzir PDFs grandes
+✓ PDFs com menos de 500 páginas são processados mais rapidamente
+✓ Deixe o sistema terminar completamente antes de fechar
+✓ Faça backup dos PDFs originais importantes
+✓ O primeiro uso pode demorar (download de modelos de IA)
+✓ Mantenha pelo menos 10 GB livres no disco
+
+
+═══════════════════════════════════════════════════════════════════════════
+🔄 ATUALIZAÇÃO DO SISTEMA
+═══════════════════════════════════════════════════════════════════════════
+
+Para atualizar o sistema:
+
+1. Faça backup da pasta "traduzidos/" se tiver arquivos importantes
+2. Baixe a nova versão
+3. Substitua os arquivos (exceto as pastas de PDFs)
+4. Execute "instalador.bat" como administrador novamente
+5. As dependências serão atualizadas automaticamente
+
+
+═══════════════════════════════════════════════════════════════════════════
+📞 SUPORTE E CONTATO
+═══════════════════════════════════════════════════════════════════════════
+
+Se você encontrar problemas não listados acima:
+
+1. Verifique os arquivos de log:
+   • validation_report.log
+   • translation.log
+
+2. Anote a mensagem de erro completa
+
+3. Verifique se seguiu todos os passos corretamente
+
+4. Tente reinstalar usando o "instalador.bat"
+
+
+═══════════════════════════════════════════════════════════════════════════
+📝 NOTAS IMPORTANTES
+═══════════════════════════════════════════════════════════════════════════
+
+• Este sistema requer conexão com internet para funcionar na primeira vez
+• A qualidade da tradução depende do modelo de IA usado
+• PDFs muito grandes (>1000 páginas) podem demorar horas
+• O sistema usa IA local (privacidade: seus dados não saem do computador)
+• Certifique-se de ter licença para traduzir os documentos
+
+
+═══════════════════════════════════════════════════════════════════════════
+
+                         💡 Dúvidas? Leia este arquivo!
+                      🚀 Bom uso do Tradutor Universal de PDF!
+
+═══════════════════════════════════════════════════════════════════════════

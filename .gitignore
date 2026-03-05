@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Ambientes virtuais
+../.venv/
+.venv/
+venv/
+ENV/
+env/
+
+# Python portável instalado pelo instalador
+python-portable/
+
+# Pastas de PDFs do usuário
+../livros-para-traduzir/*.pdf
+../traduzidos/*.pdf
+../em-inges/*.pdf
+../traduzindo/*.pdf
+
+# Arquivos de log
+*.log
+../validation_report.log
+../translation.log
+
+# Arquivos temporários do sistema
+engine/server_port.txt
+engine/.deps_installed
+engine/.python_path
+.DS_Store
+Thumbs.db
+
+# Arquivos de teste temporários
+teste-instalador.bat
+
+# Ollama
+../OllamaSetup.exe
+
+# Arquivos temporários do Windows
+*.tmp
+*.temp
