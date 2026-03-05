@@ -1,4 +1,4 @@
-# 📚 Tradutor Universal de PDFs — v1.0
+# 📚 Tradutor Universal de PDFs — v1.6
 
 **Traduza livros PDF inteiros automaticamente usando modelos de IA local (Ollama).**
 
@@ -174,7 +174,7 @@ ollama pull translategemma
 
 ---
 
-## 📋 Changelog v1.0
+## 📋 Changelog v1.6
 
 - Pipeline completo de tradução de PDFs com IA local
 - Dashboard web com controles em tempo real
@@ -209,7 +209,7 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 
 ---
 
-*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.0*
+*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.6*
 
 ## 🙏 Créditos e Reconhecimentos
 

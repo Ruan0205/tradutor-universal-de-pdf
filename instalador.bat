@@ -1,462 +1,320 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal EnableExtensions EnableDelayedExpansion
+chcp 65001 >nul 2>&1
 
-:: ============================================================================
-:: INSTALADOR AUTOMÁTICO - TRADUTOR UNIVERSAL DE PDF
-:: ============================================================================
-:: Este script verifica e instala automaticamente TODAS as dependências:
-:: - Python 3.11.x
-:: - Ambiente virtual (venv)
-:: - Pacotes Python necessários
-:: - Ollama (opcional, mas recomendado)
-:: ============================================================================
-
-title Instalador - Tradutor Universal de PDF
-
-:: Argumentos de execução
 set "NOPAUSE=0"
 set "ALREADY_ELEVATED=0"
 for %%A in (%*) do (
-    if /i "%%~A"=="nopause" set "NOPAUSE=1"
-    if /i "%%~A"=="elevated" set "ALREADY_ELEVATED=1"
+    if /I "%%~A"=="nopause" set "NOPAUSE=1"
+    if /I "%%~A"=="elevated" set "ALREADY_ELEVATED=1"
 )
 
-cls
-echo.
-echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║                                                               ║
-echo ║        📦 INSTALADOR AUTOMÁTICO v1.5 📦                      ║
-echo ║                                                               ║
-echo ║        Tradutor Universal de PDF - Sistema de IA             ║
-echo ║                                                               ║
-echo ╚═══════════════════════════════════════════════════════════════╝
-echo.
-echo.
-echo ⚠️  ATENÇÃO: Este instalador precisa de permissões de ADMINISTRADOR
-echo    para instalar o Python e outras dependências do sistema.
-echo.
-echo    Se você ainda não executou como administrador:
-echo    1. Clique com botão direito neste arquivo
-echo    2. Selecione "Executar como administrador"
-echo.
-echo ═══════════════════════════════════════════════════════════════
-echo.
-echo    Preparando instalação...
-echo.
-if "%NOPAUSE%"=="0" pause
-echo.
+set "SELF=%~f0"
+call :set_paths
 
-:: Autoelevação para evitar falha silenciosa em máquinas sem privilégios
-net session >nul 2>&1
-if errorlevel 1 (
-    if "%ALREADY_ELEVATED%"=="1" (
-        echo ⚠️  Executando sem privilégios de administrador.
-        echo    Algumas instalações globais podem falhar, mas o modo portátil continuará.
-    ) else (
-        echo ⏳ Solicitando permissões de administrador...
-        set "RELAUNCH_ARGS=elevated"
-        if "%NOPAUSE%"=="1" set "RELAUNCH_ARGS=!RELAUNCH_ARGS! nopause"
+title Instalador - Tradutor Universal de PDF v1.6
 
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs -ArgumentList '!RELAUNCH_ARGS!'"
-        if not errorlevel 1 (
-            exit /b 0
-        )
+echo.
+echo ================================================================
+echo   INSTALADOR AUTOMATICO v1.6
+echo   Tradutor Universal de PDF
+echo ================================================================
+echo.
+echo Este instalador prepara automaticamente:
+echo - Python (venv local no projeto)
+echo - Dependencias Python
+echo - Ollama (opcional) e modelo de traducao
+echo.
+if "!NOPAUSE!"=="0" pause
 
-        echo ⚠️  Permissão de administrador negada. Continuando sem admin...
-        echo    O instalador tentará completar tudo em modo portátil.
-    )
-)
+call :ensure_admin
+if !errorlevel! equ 2 exit /b 0
+if !errorlevel! neq 0 goto :fatal
 
-:: Muda para o diretório do script
-cd /d "%~dp0"
-set "PROJECT_DIR=%~dp0"
-set "BASE_DIR=%PROJECT_DIR%"
-set "VENV_DIR=%PROJECT_DIR%\.venv"
-set "PYTHON_INSTALLER=%TEMP%\python-installer.exe"
-set "PYTHON_PORTABLE_DIR=%PROJECT_DIR%python-portable"
-set "PYTHON_EMBEDDED_ZIP=%TEMP%\python-embedded.zip"
-set "PYTHON_VERSION=3.11.9"
-set "OLLAMA_MODEL_PRIMARY=translategemma"
-set "OLLAMA_MODEL_FALLBACK=TranslateGemma"
-set "OLLAMA_EXE=ollama"
-
-:: ============================================================================
-:: INÍCIO DO FLUXO PRINCIPAL
-:: ============================================================================
-goto :main
-
-:: ============================================================================
-:: FUNÇÕES AUXILIARES
-:: ============================================================================
-
-:verify_python
-:: Verifica se o Python passado como parâmetro é real e funcional
-set "TEST_PYTHON=%~1"
-"%TEST_PYTHON%" --version >nul 2>&1
-exit /b %errorlevel%
-
-:: ============================================================================
-:: ETAPA 1: VERIFICAR E INSTALAR PYTHON
-:: ============================================================================
+call :main
+if !errorlevel! neq 0 goto :fatal
+goto :success
 
 :main
-echo [1/5] Verificando Python...
 echo.
+echo [1/5] Localizando Python...
+call :find_python
+if !errorlevel! neq 0 call :install_portable_python
+if !errorlevel! neq 0 exit /b 1
 
-:: Tenta encontrar Python no venv primeiro
-if exist "%VENV_DIR%\Scripts\python.exe" (
-    set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
-    echo ✅ Python encontrado no ambiente virtual
-    goto :check_version
+for /f "tokens=*" %%v in ('"!PYTHON_EXE!" --version 2^>^&1') do set "PY_VER=%%v"
+echo    OK: !PY_VER!
+echo    Path: !PYTHON_EXE!
+
+if not exist "!ENGINE_DIR!" mkdir "!ENGINE_DIR!"
+echo !PYTHON_EXE!>"!PYTHON_PATH_FILE!"
+
+echo.
+echo [2/5] Preparando ambiente virtual...
+if exist "!VENV_DIR!\Scripts\python.exe" (
+    set "VENV_PYTHON=!VENV_DIR!\Scripts\python.exe"
+    set "VENV_PIP=!VENV_DIR!\Scripts\pip.exe"
+    echo    Ambiente virtual ja existe.
+) else (
+    "!PYTHON_EXE!" -m venv "!VENV_DIR!" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo    venv nativo indisponivel. Tentando virtualenv...
+        "!PYTHON_EXE!" -m pip install virtualenv --quiet
+        if !errorlevel! equ 0 "!PYTHON_EXE!" -m virtualenv "!VENV_DIR!"
+    )
+
+    if not exist "!VENV_DIR!\Scripts\python.exe" (
+        echo    ERRO: falha ao criar ambiente virtual.
+        exit /b 1
+    )
+
+    set "VENV_PYTHON=!VENV_DIR!\Scripts\python.exe"
+    set "VENV_PIP=!VENV_DIR!\Scripts\pip.exe"
+    echo    Ambiente virtual criado.
 )
 
-:: Procura Python portável no próprio projeto
-if exist "%PROJECT_DIR%python-portable\python.exe" (
-    set "PYTHON_EXE=%PROJECT_DIR%python-portable\python.exe"
-    echo ✅ Python portável encontrado no projeto
-    goto :check_version
+echo.
+echo [3/5] Instalando pacotes Python...
+"!VENV_PIP!" install --upgrade pip >nul 2>&1
+"!VENV_PIP!" install PyMuPDF Pillow rapidocr-onnxruntime tqdm
+if !errorlevel! neq 0 (
+    echo    ERRO: falha na instalacao de dependencias Python.
+    exit /b 1
 )
+echo ok>"!DEPS_FILE!"
+echo    Dependencias instaladas.
 
-:: Procura Python no PATH comum do Windows (locais específicos primeiro)
-for %%P in (
-    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
-    "C:\Python311\python.exe"
-    "C:\Python312\python.exe"
-    "C:\Python310\python.exe"
-    "C:\Python313\python.exe"
-) do (
-    if exist %%P (
-        call :verify_python %%P
-        if !errorlevel! equ 0 (
-            set "PYTHON_EXE=%%P"
-            goto :check_version
-        )
+echo.
+echo [4/5] Verificando Ollama...
+call :find_ollama
+if !errorlevel! neq 0 (
+    echo    Ollama nao encontrado.
+    set "INSTALL_OLLAMA="
+    set /p INSTALL_OLLAMA="    Deseja instalar agora? (S/N): "
+    if /I "!INSTALL_OLLAMA!"=="S" (
+        call :install_ollama
+        call :find_ollama
     )
 )
 
-:: Tenta encontrar Python no PATH do sistema (EVITANDO WindowsApps/Microsoft Store)
-where python >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=*" %%i in ('where python') do (
-        set "TEMP_PYTHON=%%i"
-        echo    Verificando: !TEMP_PYTHON!
-        
-        :: Ignora o alias falso da Microsoft Store
-        echo !TEMP_PYTHON! | find /i "WindowsApps" >nul
+if defined OLLAMA_EXE (
+    echo    Baixando modelo principal: !OLLAMA_MODEL_PRIMARY!
+    "!OLLAMA_EXE!" pull !OLLAMA_MODEL_PRIMARY!
+    if !errorlevel! neq 0 (
+        echo    Falha no principal. Tentando fallback: !OLLAMA_MODEL_FALLBACK!
+        "!OLLAMA_EXE!" pull !OLLAMA_MODEL_FALLBACK!
         if !errorlevel! neq 0 (
-            call :verify_python "!TEMP_PYTHON!"
-            if !errorlevel! equ 0 (
-                set "PYTHON_EXE=!TEMP_PYTHON!"
-                goto :check_version
-            )
+            echo    Aviso: nao foi possivel baixar modelo automaticamente.
+            echo    Execute manualmente depois:
+            echo      "!OLLAMA_EXE!" pull !OLLAMA_MODEL_PRIMARY!
+            echo      "!OLLAMA_EXE!" pull !OLLAMA_MODEL_FALLBACK!
         ) else (
-            echo    ⚠️  Ignorando alias da Microsoft Store
+            echo    Modelo fallback instalado com sucesso.
+        )
+    ) else (
+        echo    Modelo principal instalado com sucesso.
+    )
+) else (
+    echo    Aviso: sem Ollama, a traducao com IA nao funcionara.
+)
+
+echo.
+echo [5/5] Criando estrutura de pastas...
+if not exist "!INPUT_DIR!" mkdir "!INPUT_DIR!"
+if not exist "!OUTPUT_DIR!" mkdir "!OUTPUT_DIR!"
+if not exist "!ORIGINALS_DIR!" mkdir "!ORIGINALS_DIR!"
+if not exist "!WORKING_DIR!" mkdir "!WORKING_DIR!"
+echo    Estrutura pronta.
+
+exit /b 0
+
+:set_paths
+cd /d "%~dp0"
+for %%I in (.) do set "PROJECT_DIR=%%~fI"
+set "ENGINE_DIR=!PROJECT_DIR!\engine"
+set "VENV_DIR=!PROJECT_DIR!\.venv"
+set "PYTHON_PORTABLE_DIR=!PROJECT_DIR!\python-portable"
+set "PYTHON_EMBEDDED_ZIP=%TEMP%\python-embedded.zip"
+set "PYTHON_VERSION=3.11.9"
+set "PYTHON_EMBEDDED_URL=https://www.python.org/ftp/python/!PYTHON_VERSION!/python-!PYTHON_VERSION!-embed-amd64.zip"
+set "PYTHON_PATH_FILE=!ENGINE_DIR!\.python_path"
+set "DEPS_FILE=!ENGINE_DIR!\.deps_installed"
+set "INPUT_DIR=!PROJECT_DIR!\livros-para-traduzir"
+set "OUTPUT_DIR=!PROJECT_DIR!\traduzidos"
+set "ORIGINALS_DIR=!PROJECT_DIR!\em-inges"
+set "WORKING_DIR=!PROJECT_DIR!\traduzindo"
+set "OLLAMA_EXE="
+set "OLLAMA_MODEL_PRIMARY=translategemma"
+set "OLLAMA_MODEL_FALLBACK=TranslateGemma"
+exit /b 0
+
+:ensure_admin
+net session >nul 2>&1
+if !errorlevel! equ 0 exit /b 0
+
+if "!ALREADY_ELEVATED!"=="1" (
+    echo.
+    echo Aviso: sem privilegios de administrador. Continuando em modo portatil.
+    exit /b 0
+)
+
+echo.
+echo Solicitando elevacao de privilegios...
+set "RELAUNCH_ARGS=elevated"
+if "!NOPAUSE!"=="1" set "RELAUNCH_ARGS=!RELAUNCH_ARGS! nopause"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'cmd.exe' -Verb RunAs -ArgumentList '/c','""!SELF!" !RELAUNCH_ARGS!"'"
+if !errorlevel! equ 0 exit /b 2
+
+echo Aviso: elevacao negada. Continuando sem admin.
+exit /b 0
+
+:find_python
+set "PYTHON_EXE="
+
+if exist "!VENV_DIR!\Scripts\python.exe" (
+    call :verify_python "!VENV_DIR!\Scripts\python.exe"
+    if !errorlevel! equ 0 set "PYTHON_EXE=!VENV_DIR!\Scripts\python.exe"
+)
+if defined PYTHON_EXE exit /b 0
+
+if exist "!PYTHON_PORTABLE_DIR!\python.exe" (
+    call :verify_python "!PYTHON_PORTABLE_DIR!\python.exe"
+    if !errorlevel! equ 0 set "PYTHON_EXE=!PYTHON_PORTABLE_DIR!\python.exe"
+)
+if defined PYTHON_EXE exit /b 0
+
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+    "C:\Python313\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+    "C:\Python310\python.exe"
+) do (
+    if exist "%%~fP" (
+        call :verify_python "%%~fP"
+        if !errorlevel! equ 0 (
+            set "PYTHON_EXE=%%~fP"
+            goto :find_python_done
         )
     )
 )
 
-:: Python não encontrado - precisa instalar
-echo ❌ Python não encontrado no sistema
-echo.
-echo 📦 Instalando Python PORTÁVEL no projeto...
-echo    (Isso torna o projeto 100%% portável - pode copiar para outros PCs!)
-echo.
-echo 📥 Baixando Python %PYTHON_VERSION% Embedded...
-echo    (Isso pode levar alguns minutos)
-echo.
+where python >nul 2>&1
+if !errorlevel! equ 0 (
+    for /f "usebackq delims=" %%I in (`where python`) do (
+        set "CANDIDATE=%%~fI"
+        echo !CANDIDATE! | find /I "WindowsApps" >nul
+        if !errorlevel! neq 0 (
+            call :verify_python "!CANDIDATE!"
+            if !errorlevel! equ 0 (
+                set "PYTHON_EXE=!CANDIDATE!"
+                goto :find_python_done
+            )
+        )
+    )
+)
 
-:: URL do Python Embedded (versão portável)
-set "PYTHON_EMBEDDED_URL=https://www.python.org/ftp/python/%PYTHON_VERSION%/python-%PYTHON_VERSION%-embed-amd64.zip"
+:find_python_done
+if defined PYTHON_EXE exit /b 0
+exit /b 1
 
-:: Baixa usando PowerShell
-powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Write-Host '   Baixando...'; (New-Object Net.WebClient).DownloadFile('%PYTHON_EMBEDDED_URL%', '%PYTHON_EMBEDDED_ZIP%'); Write-Host '   Download concluído!'}"
+:verify_python
+set "TEST_PY=%~1"
+"%~1" --version >nul 2>&1
+exit /b %errorlevel%
 
-if not exist "%PYTHON_EMBEDDED_ZIP%" (
-    echo.
-    echo ❌ ERRO: Não foi possível baixar o Python Embedded
-    echo    Verifique sua conexão com a internet
-    echo.
-    echo    ALTERNATIVA: Baixe o Python Embedded manualmente:
-    echo    %PYTHON_EMBEDDED_URL%
-    echo.
-    echo    Extraia para: %PYTHON_PORTABLE_DIR%
-    if "%NOPAUSE%"=="0" pause
+:install_portable_python
+echo.
+echo Python nao encontrado. Instalando Python portatil no projeto...
+
+if not exist "!PYTHON_PORTABLE_DIR!" mkdir "!PYTHON_PORTABLE_DIR!"
+del /f /q "!PYTHON_EMBEDDED_ZIP!" >nul 2>&1
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('!PYTHON_EMBEDDED_URL!','!PYTHON_EMBEDDED_ZIP!')"
+if not exist "!PYTHON_EMBEDDED_ZIP!" (
+    echo    ERRO: falha no download do Python embedded.
     exit /b 1
 )
 
-echo.
-echo ⏳ Extraindo Python portável...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '!PYTHON_EMBEDDED_ZIP!' -DestinationPath '!PYTHON_PORTABLE_DIR!' -Force"
+del /f /q "!PYTHON_EMBEDDED_ZIP!" >nul 2>&1
 
-:: Cria o diretório se não existir
-if not exist "%PYTHON_PORTABLE_DIR%" mkdir "%PYTHON_PORTABLE_DIR%"
-
-:: Extrai o ZIP usando PowerShell
-powershell -Command "& {Expand-Archive -Path '%PYTHON_EMBEDDED_ZIP%' -DestinationPath '%PYTHON_PORTABLE_DIR%' -Force}"
-
-:: Remove o arquivo ZIP
-del "%PYTHON_EMBEDDED_ZIP%" >nul 2>&1
-
-:: Configura o Python Embedded para funcionar com pip
-echo.
-echo ⚙️  Configurando Python portável...
-
-:: Descomenta as linhas de import site no python311._pth
-if exist "%PYTHON_PORTABLE_DIR%\python311._pth" (
-    powershell -Command "(Get-Content '%PYTHON_PORTABLE_DIR%\python311._pth') -replace '#import site', 'import site' | Set-Content '%PYTHON_PORTABLE_DIR%\python311._pth'"
+if exist "!PYTHON_PORTABLE_DIR!\python311._pth" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Content '!PYTHON_PORTABLE_DIR!\python311._pth') -replace '#import site','import site' | Set-Content '!PYTHON_PORTABLE_DIR!\python311._pth'"
 )
 
-:: Baixa e instala o get-pip.py
-echo    Instalando pip no Python portátil...
-powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://bootstrap.pypa.io/get-pip.py', '%PYTHON_PORTABLE_DIR%\get-pip.py')}"
-
-if exist "%PYTHON_PORTABLE_DIR%\get-pip.py" (
-    "%PYTHON_PORTABLE_DIR%\python.exe" "%PYTHON_PORTABLE_DIR%\get-pip.py" --no-warn-script-location
-    del "%PYTHON_PORTABLE_DIR%\get-pip.py" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://bootstrap.pypa.io/get-pip.py','!PYTHON_PORTABLE_DIR!\get-pip.py')"
+if exist "!PYTHON_PORTABLE_DIR!\get-pip.py" (
+    "!PYTHON_PORTABLE_DIR!\python.exe" "!PYTHON_PORTABLE_DIR!\get-pip.py" --no-warn-script-location
+    del /f /q "!PYTHON_PORTABLE_DIR!\get-pip.py" >nul 2>&1
 )
 
-echo.
-echo ✅ Python portável instalado com sucesso!
-echo    Local: %PYTHON_PORTABLE_DIR%
-echo.
-echo    💡 VANTAGEM: Agora você pode copiar a pasta inteira do projeto
-echo       para outro computador e funcionará imediatamente!
-echo.
+call :verify_python "!PYTHON_PORTABLE_DIR!\python.exe"
+if !errorlevel! neq 0 exit /b 1
+set "PYTHON_EXE=!PYTHON_PORTABLE_DIR!\python.exe"
+echo    Python portatil instalado.
+exit /b 0
 
-set "PYTHON_EXE=%PYTHON_PORTABLE_DIR%\python.exe"
-goto :check_version
-
-:check_version
-echo.
-for /f "tokens=*" %%i in ('"%PYTHON_EXE%" --version 2^>^&1') do set PYTHON_VERSION_STR=%%i
-echo    Versão: %PYTHON_VERSION_STR%
-echo    Local: %PYTHON_EXE%
-echo.
-
-:: Cria o diretório engine se não existir
-if not exist "%PROJECT_DIR%engine" mkdir "%PROJECT_DIR%engine"
-
-:: Salva o caminho do Python em um arquivo de configuração para uso rápido
-echo %PYTHON_EXE%> "%PROJECT_DIR%engine\.python_path"
-
-:: ============================================================================
-:: ETAPA 2: CRIAR AMBIENTE VIRTUAL
-:: ============================================================================
-
-echo [2/5] Verificando ambiente virtual...
-echo.
-
-if exist "%VENV_DIR%\Scripts\python.exe" (
-    echo ✅ Ambiente virtual já existe
-    set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
-    set "VENV_PIP=%VENV_DIR%\Scripts\pip.exe"
-) else (
-    echo ⏳ Criando ambiente virtual...
-    
-    :: Tenta criar o venv com o módulo venv nativo
-    "%PYTHON_EXE%" -m venv "%VENV_DIR%" >nul 2>&1
-    
-    if !errorlevel! neq 0 (
-        echo    ⚠️  Módulo venv não disponível, instalando virtualenv...
-        "%PYTHON_EXE%" -m pip install virtualenv --quiet
-        
-        if !errorlevel! equ 0 (
-            echo    ⏳ Criando ambiente virtual com virtualenv...
-            "%PYTHON_EXE%" -m virtualenv "%VENV_DIR%"
-        ) else (
-            echo    ❌ Erro ao instalar virtualenv
-            echo       Tentando criar venv de forma alternativa...
-            
-            :: Se for Python portável, tenta instalar pip primeiro
-            if exist "%PYTHON_PORTABLE_DIR%\python.exe" (
-                echo       Configurando pip no Python portátil...
-                powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://bootstrap.pypa.io/get-pip.py', '%TEMP%\get-pip.py')}"
-                "%PYTHON_EXE%" "%TEMP%\get-pip.py" --no-warn-script-location
-                del "%TEMP%\get-pip.py" >nul 2>&1
-                
-                :: Tenta novamente
-                "%PYTHON_EXE%" -m pip install virtualenv --quiet
-                "%PYTHON_EXE%" -m virtualenv "%VENV_DIR%"
-            )
-        )
-    )
-    
-    if exist "%VENV_DIR%\Scripts\python.exe" (
-        echo ✅ Ambiente virtual criado com sucesso
-        set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
-        set "VENV_PIP=%VENV_DIR%\Scripts\pip.exe"
-    ) else (
-        echo ❌ ERRO: Não foi possível criar o ambiente virtual
-        echo.
-        echo    Possíveis soluções:
-        echo    1. Execute este script como ADMINISTRADOR
-        echo    2. Desinstale o Python atual e execute novamente
-        echo    3. Verifique se há espaço em disco suficiente
-        if "%NOPAUSE%"=="0" pause
-        exit /b 1
-    )
-)
-
-echo.
-
-:: ============================================================================
-:: ETAPA 3: INSTALAR PACOTES PYTHON
-:: ============================================================================
-
-echo [3/5] Instalando pacotes Python necessários...
-echo.
-
-echo ⏳ Atualizando pip...
-"%VENV_PIP%" install --upgrade pip >nul 2>&1
-
-echo ⏳ Instalando PyMuPDF...
-"%VENV_PIP%" install PyMuPDF
-
-echo ⏳ Instalando Pillow...
-"%VENV_PIP%" install Pillow
-
-echo ⏳ Instalando rapidocr-onnxruntime...
-"%VENV_PIP%" install rapidocr-onnxruntime
-
-echo ⏳ Instalando tqdm...
-"%VENV_PIP%" install tqdm
-
-echo.
-echo ✅ Todos os pacotes Python instalados!
-echo.
-
-:: Criar flag de dependências instaladas
-if not exist "%PROJECT_DIR%engine" mkdir "%PROJECT_DIR%engine"
-echo ok > "%PROJECT_DIR%engine\.deps_installed"
-
-:: ============================================================================
-:: ETAPA 4: VERIFICAR OLLAMA
-:: ============================================================================
-
-echo [4/5] Verificando Ollama (IA para tradução)...
-echo.
-
+:find_ollama
+set "OLLAMA_EXE="
 where ollama >nul 2>&1
-if %errorlevel% equ 0 (
-    echo ✅ Ollama encontrado
+if !errorlevel! equ 0 (
     set "OLLAMA_EXE=ollama"
-    goto :pull_ollama_model
+    exit /b 0
 )
 
-:: Verifica em locais comuns
-set "OLLAMA_PATH="
 for %%O in (
     "%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
     "%LOCALAPPDATA%\Ollama\ollama.exe"
     "C:\Program Files\Ollama\ollama.exe"
 ) do (
-    if exist %%O (
-        set "OLLAMA_PATH=%%O"
-        set "OLLAMA_EXE=%%O"
-        echo ✅ Ollama encontrado em %%O
-        goto :pull_ollama_model
+    if exist "%%~fO" (
+        set "OLLAMA_EXE=%%~fO"
+        exit /b 0
     )
 )
 
-echo ⚠️  Ollama não encontrado
-echo.
-echo    O Ollama é necessário para tradução com IA.
-echo.
-set /p INSTALL_OLLAMA="    Deseja instalar o Ollama agora? (S/N): "
+exit /b 1
 
-if /i "!INSTALL_OLLAMA!"=="S" (
-    echo.
-    echo 📥 Baixando Ollama...
-    
-    set "OLLAMA_INSTALLER=%TEMP%\OllamaSetup.exe"
-    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://ollama.com/download/OllamaSetup.exe', '!OLLAMA_INSTALLER!')}"
-    
-    if exist "!OLLAMA_INSTALLER!" (
-        echo.
-        echo ⏳ Instalando Ollama...
-        echo    (Uma janela de instalação será aberta)
-        start /wait "" "!OLLAMA_INSTALLER!" /VERYSILENT
-        del "!OLLAMA_INSTALLER!" >nul 2>&1
-        echo ✅ Ollama instalado!
-        
-        :: Detecta o executável do Ollama após instalação
-        if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
-        if exist "%LOCALAPPDATA%\Ollama\ollama.exe" set "OLLAMA_EXE=%LOCALAPPDATA%\Ollama\ollama.exe"
-        if exist "C:\Program Files\Ollama\ollama.exe" set "OLLAMA_EXE=C:\Program Files\Ollama\ollama.exe"
-        goto :pull_ollama_model
-    ) else (
-        echo ❌ Não foi possível baixar o Ollama
-        echo    Você pode instalá-lo manualmente depois de: https://ollama.com/download
-    )
-) else (
-    echo.
-    echo    ℹ️  Você pode instalar o Ollama depois de: https://ollama.com/download
-    echo    O sistema não funcionará sem o Ollama.
+:install_ollama
+set "OLLAMA_INSTALLER=%TEMP%\OllamaSetup.exe"
+del /f /q "!OLLAMA_INSTALLER!" >nul 2>&1
+
+echo    Baixando instalador do Ollama...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://ollama.com/download/OllamaSetup.exe','!OLLAMA_INSTALLER!')"
+if not exist "!OLLAMA_INSTALLER!" (
+    echo    Falha no download do Ollama.
+    exit /b 1
 )
 
-echo.
-goto :create_dirs
-
-:pull_ollama_model
-echo.
-echo ⏳ Baixando modelo do Ollama automaticamente...
-echo    Modelo solicitado: %OLLAMA_MODEL_PRIMARY%
-
-"%OLLAMA_EXE%" pull %OLLAMA_MODEL_PRIMARY%
-if errorlevel 1 (
-    echo ⚠️  Falha ao baixar '%OLLAMA_MODEL_PRIMARY%'. Tentando fallback '%OLLAMA_MODEL_FALLBACK%'...
-    "%OLLAMA_EXE%" pull %OLLAMA_MODEL_FALLBACK%
-    if errorlevel 1 (
-        echo ⚠️  Não foi possível baixar o modelo automaticamente agora.
-        echo    Execute depois manualmente:
-        echo    "%OLLAMA_EXE%" pull %OLLAMA_MODEL_PRIMARY%
-        echo    ou
-        echo    "%OLLAMA_EXE%" pull %OLLAMA_MODEL_FALLBACK%
-    ) else (
-        echo ✅ Modelo '%OLLAMA_MODEL_FALLBACK%' baixado com sucesso!
-    )
-) else (
-    echo ✅ Modelo '%OLLAMA_MODEL_PRIMARY%' baixado com sucesso!
-)
-
-echo.
-
-:: ============================================================================
-:: ETAPA 5: CRIAR DIRETÓRIOS NECESSÁRIOS
-:: ============================================================================
-
-:create_dirs
-echo [5/5] Criando estrutura de pastas...
-echo.
-
-if not exist "%PROJECT_DIR%\livros-para-traduzir" mkdir "%PROJECT_DIR%\livros-para-traduzir"
-if not exist "%PROJECT_DIR%\traduzidos" mkdir "%PROJECT_DIR%\traduzidos"
-if not exist "%PROJECT_DIR%\em-inges" mkdir "%PROJECT_DIR%\em-inges"
-if not exist "%PROJECT_DIR%\traduzindo" mkdir "%PROJECT_DIR%\traduzindo"
-
-echo ✅ Estrutura de pastas criada
-echo.
-
-:: ============================================================================
-:: INSTALAÇÃO CONCLUÍDA
-:: ============================================================================
-
-echo.
-echo ═══════════════════════════════════════════════════════════════
-echo.
-echo ✅ INSTALAÇÃO CONCLUÍDA COM SUCESSO!
-echo.
-echo    Agora você pode usar o sistema:
-echo    1. Execute o arquivo "iniciar.bat"
-echo    2. O dashboard será aberto automaticamente
-echo    3. Coloque seus PDFs na pasta "livros-para-traduzir"
-echo    4. Clique em "Iniciar" no dashboard
-echo.
-echo ═══════════════════════════════════════════════════════════════
-echo.
-if "%NOPAUSE%"=="0" pause
-
+echo    Executando instalacao do Ollama...
+start /wait "" "!OLLAMA_INSTALLER!" /VERYSILENT
+del /f /q "!OLLAMA_INSTALLER!" >nul 2>&1
 exit /b 0
+
+:success
+echo.
+echo ================================================================
+echo   INSTALACAO CONCLUIDA COM SUCESSO (v1.6)
+echo ================================================================
+echo 1. Execute iniciar.bat
+echo 2. Abra o dashboard no navegador
+echo 3. Coloque PDFs em livros-para-traduzir
+echo.
+if "!NOPAUSE!"=="0" pause
+exit /b 0
+
+:fatal
+echo.
+echo ================================================================
+echo   ERRO: instalacao interrompida.
+echo ================================================================
+echo Se necessario, mova o projeto para um caminho simples,
+echo ex: C:\TradutorUniversalPDF\
+echo.
+if "!NOPAUSE!"=="0" pause
+exit /b 1

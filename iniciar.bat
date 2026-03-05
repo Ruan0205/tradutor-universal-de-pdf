@@ -1,177 +1,122 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-setlocal enabledelayedexpansion
-title Tradutor Universal de PDF
+title Tradutor Universal de PDF v1.6
 
-cls
+set "NOPAUSE=0"
+for %%A in (%*) do (
+    if /I "%%~A"=="nopause" set "NOPAUSE=1"
+)
+
+call :set_paths
+
 echo.
-echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║                                                               ║
-echo ║          📚 TRADUTOR UNIVERSAL DE PDF v1.5 📚                  ║
-echo ║                                                               ║
-echo ║        Tradução Automática com IA - Ollama                   ║
-echo ║                                                               ║
-echo ╚═══════════════════════════════════════════════════════════════╝
-echo.
-echo  ⚠️  IMPORTANTE: Para primeira execução ou instalação de
-echo      dependências, execute como ADMINISTRADOR!
-echo.
-echo      Clique com botão direito no arquivo e selecione
-echo      "Executar como administrador"
-echo.
-echo ═══════════════════════════════════════════════════════════════
+echo ================================================================
+echo   TRADUTOR UNIVERSAL DE PDF v1.6
+echo ================================================================
 echo.
 
-:: Muda para o diretório do script (onde está o iniciar.bat)
+call :find_python
+if !errorlevel! neq 0 goto :python_missing
+
+echo Iniciando sistema com Python:
+echo !PYTHON_EXE!
+echo.
+
+"!PYTHON_EXE!" "!PROJECT_DIR!\iniciar.py"
+if !errorlevel! neq 0 goto :run_error
+
+if "!NOPAUSE!"=="0" pause
+exit /b 0
+
+:set_paths
 cd /d "%~dp0"
-
-set "PROJECT_DIR=%~dp0"
-set "BASE_DIR=%PROJECT_DIR%"
-set "VENV_DIR=%PROJECT_DIR%\.venv"
+for %%I in (.) do set "PROJECT_DIR=%%~fI"
+set "VENV_DIR=!PROJECT_DIR!\.venv"
+set "PYTHON_CONFIG=!PROJECT_DIR!\engine\.python_path"
 set "PYTHON_EXE="
-set "PYTHON_CONFIG=%PROJECT_DIR%engine\.python_path"
-
-:: ============================================================================
-:: INICIO DO FLUXO PRINCIPAL
-:: ============================================================================
-goto :main
-
-:: ============================================================================
-:: FUNÇÕES AUXILIARES
-:: ============================================================================
+exit /b 0
 
 :verify_python
-:: Verifica se o Python é real (não o alias da MS Store)
-set "TEST_PY=%~1"
-"%TEST_PY%" --version >nul 2>&1
+"%~1" --version >nul 2>&1
 exit /b %errorlevel%
 
-:: ============================================================================
-:: BUSCAR PYTHON
-:: ============================================================================
-
-:main
-
-:: 1. PRIORIDADE MÁXIMA: Python do ambiente virtual
-if exist "%VENV_DIR%\Scripts\python.exe" (
-    call :verify_python "%VENV_DIR%\Scripts\python.exe"
-    if !errorlevel! equ 0 (
-        set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
-        goto :run_python
-    )
+:find_python
+if exist "!VENV_DIR!\Scripts\python.exe" (
+    call :verify_python "!VENV_DIR!\Scripts\python.exe"
+    if !errorlevel! equ 0 set "PYTHON_EXE=!VENV_DIR!\Scripts\python.exe"
 )
+if defined PYTHON_EXE exit /b 0
 
-:: 2. Usa o caminho salvo pelo instalador (se existir)
-if exist "%PYTHON_CONFIG%" (
-    for /f "usebackq delims=" %%i in ("%PYTHON_CONFIG%") do set "SAVED_PYTHON=%%i"
-    if exist "!SAVED_PYTHON!" (
-        call :verify_python "!SAVED_PYTHON!"
-        if !errorlevel! equ 0 (
-            set "PYTHON_EXE=!SAVED_PYTHON!"
-            goto :run_python
+if exist "!PYTHON_CONFIG!" (
+    for /f "usebackq delims=" %%I in ("!PYTHON_CONFIG!") do set "SAVED_PYTHON=%%I"
+    if defined SAVED_PYTHON (
+        if exist "!SAVED_PYTHON!" (
+            call :verify_python "!SAVED_PYTHON!"
+            if !errorlevel! equ 0 set "PYTHON_EXE=!SAVED_PYTHON!"
         )
     )
 )
+if defined PYTHON_EXE exit /b 0
 
-:: 3. Procura Python portável no projeto
-if exist "%PROJECT_DIR%python-portable\python.exe" (
-    call :verify_python "%PROJECT_DIR%python-portable\python.exe"
-    if !errorlevel! equ 0 (
-        set "PYTHON_EXE=%PROJECT_DIR%python-portable\python.exe"
-        goto :run_python
-    )
+if exist "!PROJECT_DIR!\python-portable\python.exe" (
+    call :verify_python "!PROJECT_DIR!\python-portable\python.exe"
+    if !errorlevel! equ 0 set "PYTHON_EXE=!PROJECT_DIR!\python-portable\python.exe"
 )
+if defined PYTHON_EXE exit /b 0
 
-:: 4. Procura Python em locais comuns do Windows (locais específicos)
 for %%P in (
-    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python39\python.exe"
-    "C:\Python311\python.exe"
-    "C:\Python312\python.exe"
-    "C:\Python310\python.exe"
     "C:\Python313\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+    "C:\Python310\python.exe"
     "C:\Python39\python.exe"
 ) do (
-    if exist %%P (
-        call :verify_python "%%~P"
+    if exist "%%~fP" (
+        call :verify_python "%%~fP"
         if !errorlevel! equ 0 (
-            set "PYTHON_EXE=%%~P"
-            goto :run_python
+            set "PYTHON_EXE=%%~fP"
+            goto :find_python_done
         )
     )
 )
 
-:: 5. Procura no PATH do sistema (FILTRANDO o alias da Microsoft Store!)
 where python >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=*" %%i in ('where python') do (
-        set "TEMP_PYTHON=%%i"
-        
-        :: Ignora completamente o alias falso da Microsoft Store/WindowsApps
-        echo !TEMP_PYTHON! | find /i "WindowsApps" >nul
+if !errorlevel! equ 0 (
+    for /f "usebackq delims=" %%I in (`where python`) do (
+        set "CANDIDATE=%%~fI"
+        echo !CANDIDATE! | find /I "WindowsApps" >nul
         if !errorlevel! neq 0 (
-            call :verify_python "!TEMP_PYTHON!"
+            call :verify_python "!CANDIDATE!"
             if !errorlevel! equ 0 (
-                set "PYTHON_EXE=!TEMP_PYTHON!"
-                goto :run_python
+                set "PYTHON_EXE=!CANDIDATE!"
+                goto :find_python_done
             )
         )
     )
 )
 
-:: Python não encontrado
-echo.
-echo ═══════════════════════════════════════════════════════════════
-echo.
-echo ❌ ERRO: Python não encontrado no sistema!
-echo.
-echo    O Python é necessário para executar o Tradutor de PDF.
-echo.
-echo    🔧 SOLUÇÕES:
-echo.
-echo    1. Execute o arquivo "instalador.bat" como ADMINISTRADOR
-echo       (Clique com botão direito ^> Executar como administrador)
-echo.
-echo       O instalador irá:
-echo       - Baixar e instalar o Python automaticamente
-echo       - Configurar o ambiente virtual
-echo       - Instalar todas as dependências necessárias
-echo.
-echo    2. OU baixe e instale o Python manualmente:
-echo       https://www.python.org/downloads/
-echo       (Marque "Add Python to PATH" durante a instalação!)
-echo.
-echo ═══════════════════════════════════════════════════════════════
-echo.
-pause
+:find_python_done
+if defined PYTHON_EXE exit /b 0
 exit /b 1
 
-:: ============================================================================
-:: EXECUTAR PYTHON
-:: ============================================================================
-
-:run_python
+:python_missing
 echo.
-echo ⏳ Iniciando sistema...
-echo    Python: !PYTHON_EXE!
+echo ERRO: Python nao encontrado.
+echo Execute instalador.bat primeiro.
 echo.
+if "!NOPAUSE!"=="0" pause
+exit /b 1
 
-"!PYTHON_EXE!" "%~dp0iniciar.py"
-
-if %errorlevel% neq 0 (
-    echo.
-    echo ═══════════════════════════════════════════════════════════════
-    echo.
-    echo ⚠️  ERRO ao executar o sistema
-    echo.
-    echo    Se for a primeira vez executando, ou se faltam dependências,
-    echo    execute o "instalador.bat" como ADMINISTRADOR.
-    echo.
-    echo ═══════════════════════════════════════════════════════════════
-    echo.
-)
-
-pause
+:run_error
+echo.
+echo ERRO ao iniciar o sistema.
+echo Se for a primeira execucao, rode instalador.bat.
+echo.
+if "!NOPAUSE!"=="0" pause
+exit /b 1
