@@ -69,6 +69,25 @@ _validator_process: Optional[subprocess.Popen] = None
 _lock = threading.Lock()
 
 
+def _monitor_pipeline_process():
+    """Monitor thread para detectar quando pipeline termina e resetar estado."""
+    global _pipeline_process
+    while True:
+        time.sleep(2)
+        with _lock:
+            if _pipeline_process is not None and not is_process_alive(_pipeline_process):
+                state = read_state()
+                current_status = state.get("status", "idle")
+                if current_status in ("running", "paused", "completed"):
+                    log.info("Pipeline finalizado. Resetando estado para idle.")
+                    write_state({"status": "idle"})
+                _pipeline_process = None
+
+
+_monitor_thread = threading.Thread(target=_monitor_pipeline_process, daemon=True)
+_monitor_thread.start()
+
+
 def load_config() -> dict:
     defaults = {
         "ollama_url": "http://localhost:11434",
@@ -131,6 +150,16 @@ def read_state() -> dict:
     return {"status": "idle"}
 
 
+def write_state(state: dict):
+    """Escreve estado da pipeline para arquivo."""
+    state["last_update"] = datetime.now().isoformat()
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        log.error("Erro ao escrever state: %s", e)
+
+
 def is_process_alive(proc) -> bool:
     return proc is not None and proc.poll() is None
 
@@ -147,8 +176,9 @@ def start_pipeline(retranslate: str = None):
             cmd += ["--retranslate", retranslate]
         _pipeline_process = subprocess.Popen(
             cmd, cwd=str(ENGINE_DIR),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+            text=True, universal_newlines=True, bufsize=1,
         )
         log.info("Pipeline iniciado (PID=%d)", _pipeline_process.pid)
         return {"ok": True, "pid": _pipeline_process.pid}
@@ -382,8 +412,13 @@ def get_full_status() -> dict:
     validator_alive = is_process_alive(_validator_process)
 
     effective_status = state.get("status", "idle")
-    if not pipeline_alive and effective_status in ("running", "paused"):
+    # Se pipeline não está rodando e estava "completed", reset para idle
+    if not pipeline_alive and effective_status == "completed":
         effective_status = "idle"
+        write_state({"status": "idle"})
+    elif not pipeline_alive and effective_status in ("running", "paused"):
+        effective_status = "idle"
+        write_state({"status": "idle"})
     if ctrl.get("command") == "pause" and pipeline_alive:
         effective_status = "paused"
 
@@ -727,6 +762,9 @@ def main():
     print(f"  TRADUTOR UNIVERSAL DE PDF - Dashboard")
     print(f"  http://localhost:{port}")
     print(f"{'='*60}\n")
+    
+    # Inicializar arquivo de estado
+    write_state({"status": "idle"})
 
     server = HTTPServer(("0.0.0.0", port), DashboardHandler)
     # Write port to file for the launcher to read

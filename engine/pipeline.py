@@ -814,7 +814,9 @@ class TranslationPipeline:
         self._recover_translating_dir()
 
         if retranslate_file:
-            return self._retranslate_single(retranslate_file)
+            result = self._retranslate_single(retranslate_file)
+            update_state(status="idle")
+            return result
 
         pdfs = self._get_sorted_pdfs()
         if not pdfs:
@@ -843,7 +845,7 @@ class TranslationPipeline:
             ctrl = check_control(self.translator)
             if ctrl == "stop":
                 log.info("Pipeline parado pelo usuário.")
-                update_state(status="stopped")
+                update_state(status="idle")
                 return
 
             # Handle dynamic file removal
@@ -871,7 +873,7 @@ class TranslationPipeline:
             try:
                 result = self._process_single_book(pdf_path)
                 if result == "stopped":
-                    update_state(status="stopped")
+                    update_state(status="idle")
                     return
                 completed.append(pdf_path.name)
                 update_state(completed_books=completed, book_just_completed=pdf_path.name)
@@ -879,7 +881,7 @@ class TranslationPipeline:
                 log.error("ERRO '%s':\n%s", pdf_path.name, traceback.format_exc())
                 self._recover_translating_dir()
 
-        update_state(status="completed")
+        update_state(status="idle")
         log.info("\n" + "=" * 60)
         log.info("PIPELINE CONCLUÍDO")
         log.info("=" * 60)
@@ -891,6 +893,7 @@ class TranslationPipeline:
         if not orig.exists():
             # Talvez o arquivo esteja em traduzidos com nome PT
             log.error("Arquivo original não encontrado: %s", filename)
+            update_state(status="idle")
             return
         # Mover de volta para input
         dest = INPUT_DIR / filename

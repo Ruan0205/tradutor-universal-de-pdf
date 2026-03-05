@@ -672,7 +672,16 @@ async function api(method, path, body) {
   }
 }
 
-async function apiStart() { const r = await api('POST', '/api/start'); toast(r.ok ? 'Pipeline iniciado!' : r.error, !r.ok); refresh(); }
+async function apiStart() { 
+  const startBtn = document.querySelector('[onclick="apiStart()"]');
+  if (startBtn) startBtn.disabled = true;
+  const r = await api('POST', '/api/start'); 
+  if (!r.ok) {
+    if (startBtn) startBtn.disabled = false;
+  }
+  toast(r.ok ? 'Pipeline iniciado!' : r.error, !r.ok); 
+  refresh(); 
+}
 async function apiStop() { const r = await api('POST', '/api/stop'); toast(r.ok ? 'Pipeline parado.' : r.error, !r.ok); refresh(); }
 async function apiPause() { const r = await api('POST', '/api/pause'); toast(r.ok ? 'Pipeline pausado.' : r.error, !r.ok); refresh(); }
 async function apiResume() { const r = await api('POST', '/api/resume'); toast(r.ok ? 'Pipeline retomado!' : r.error, !r.ok); refresh(); }
@@ -929,7 +938,10 @@ function renderDashboard() {
   const isPaused = status === 'paused';
   const isIdle = !isRunning && !isPaused;
 
-  document.getElementById('btnStart').style.display = isIdle ? '' : 'none';
+  const btnStart = document.getElementById('btnStart');
+  btnStart.style.display = isIdle ? '' : 'none';
+  btnStart.disabled = false;  // Garantir que está habilitado quando visível
+  
   document.getElementById('btnPause').style.display = isRunning ? '' : 'none';
   document.getElementById('btnResume').style.display = isPaused ? '' : 'none';
   document.getElementById('btnStop').style.display = !isIdle ? '' : 'none';

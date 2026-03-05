@@ -109,13 +109,25 @@ def find_valid_python() -> str:
 def cprint(msg, color="white"):
     colors = {"green": "\033[92m", "red": "\033[91m", "yellow": "\033[93m",
               "blue": "\033[94m", "cyan": "\033[96m", "white": "\033[0m", "bold": "\033[1m"}
-    print(f"{colors.get(color, '')}{msg}\033[0m")
+    try:
+        print(f"{colors.get(color, '')}{msg}\033[0m", end="\n", flush=True)
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        # Fallback se houver erro de encoding
+        try:
+            print(msg, end="\n", flush=True)
+        except Exception:
+            pass
+
 
 def banner():
-    cprint("╔═══════════════════════════════════════════════════╗", "cyan")
-    cprint("║        📚 TRADUTOR UNIVERSAL DE PDF 📚            ║", "cyan")
-    cprint("║     Tradução automática com IA • Ollama          ║", "cyan")
-    cprint("╚═══════════════════════════════════════════════════╝", "cyan")
+    try:
+        cprint("╔═══════════════════════════════════════════════════╗", "cyan")
+        cprint("║        📚 TRADUTOR UNIVERSAL DE PDF 📚            ║", "cyan")
+        cprint("║     Tradução automática com IA • Ollama          ║", "cyan")
+        cprint("╚═══════════════════════════════════════════════════╝", "cyan")
+    except Exception:
+        # Fallback sem caracteres especiais
+        print("\n=== TRADUTOR UNIVERSAL DE PDF ===\n")
     print()
     cprint("⚠️  IMPORTANTE: Se alguma dependência falhar,", "yellow")
     cprint("   execute o 'instalador.bat' como ADMINISTRADOR", "yellow")
