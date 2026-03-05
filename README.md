@@ -8,35 +8,46 @@
 
 ## 🖥️ Preview
 
+### 🎬 Demonstração em Vídeo
+
+<p align="center">
+  <video src="Video-projeto/Demonstrativo%20tradutor-universal-de-pdf.mp4" controls width="100%" preload="metadata"></video>
+</p>
+
+<p align="center"><em>Vídeo demonstrativo do Tradutor Universal de PDFs em funcionamento.</em></p>
+<p align="center"><a href="Video-projeto/Demonstrativo%20tradutor-universal-de-pdf.mp4">▶ Abrir vídeo diretamente</a></p>
+
+### 🖼️ Capturas do Projeto
+
 <p align="center">
   <img src="imagens-telas/Tela%20do%20projeto.png" alt="Tela inicial do Tradutor Universal de PDFs — Dashboard em funcionamento" width="100%">
 </p>
 
 <p align="center"><em>Dashboard web do projeto em funcionamento — tradução de PDFs com IA local em tempo real.</em></p>
 
-## 🖼️ Galeria de Telas
+#### 🖼️ Galeria de Telas
 
-### 📚 Gerenciamento de Livros
+#### 📚 Gerenciamento de Livros
 <p align="center">
   <img src="imagens-telas/Tela%20livros.png" alt="Tela de gerenciamento da fila de livros" width="100%">
 </p>
 
-### 🤖 Modelos de IA
+#### 🤖 Modelos de IA
 <p align="center">
   <img src="imagens-telas/Tela%20modelos%20de%20IA.png" alt="Tela de seleção e configuração de modelos de IA" width="100%">
 </p>
 
-### ⚙️ Configurações
+#### ⚙️ Configurações
 <p align="center">
   <img src="imagens-telas/Tela%20configurações.png" alt="Tela de configurações gerais do pipeline" width="100%">
 </p>
 
-### ✅ Validador
+#### ✅ Validador
 <p align="center">
   <img src="imagens-telas/Tela%20validador.png" alt="Tela de validação automática das traduções" width="100%">
 </p>
 
-### 🔍 Visualizador Comparativo
+#### 🔍 Visualizador Comparativo
 <p align="center">
   <img src="imagens-telas/Tela%20visualizador.png" alt="Tela do visualizador comparativo entre original e tradução" width="100%">
 </p>
