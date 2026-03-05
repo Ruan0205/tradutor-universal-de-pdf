@@ -169,6 +169,17 @@ def start_pipeline(retranslate: str = None):
     with _lock:
         if is_process_alive(_pipeline_process):
             return {"ok": False, "error": "Pipeline já está rodando"}
+        # Guard secundário: verificar se pipeline estado indica execução recente
+        state = read_state()
+        if state.get("status") in ("running", "paused"):
+            last = state.get("last_update", "")
+            if last:
+                try:
+                    dt = datetime.fromisoformat(last)
+                    if (datetime.now() - dt).total_seconds() < 30:
+                        return {"ok": False, "error": "Pipeline parece estar rodando (estado recente)"}
+                except Exception:
+                    pass
         cfg = load_config()
         write_control({"command": "run", "model": cfg["model_name"]})
         cmd = [PYTHON_EXE, PIPELINE_SCRIPT]
@@ -176,9 +187,8 @@ def start_pipeline(retranslate: str = None):
             cmd += ["--retranslate", retranslate]
         _pipeline_process = subprocess.Popen(
             cmd, cwd=str(ENGINE_DIR),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
-            text=True, universal_newlines=True, bufsize=1,
         )
         log.info("Pipeline iniciado (PID=%d)", _pipeline_process.pid)
         return {"ok": True, "pid": _pipeline_process.pid}
@@ -763,6 +773,18 @@ def main():
     print(f"  http://localhost:{port}")
     print(f"{'='*60}\n")
     
+    # Atualizar base_dir no config para o diretório real atual
+    # (evita paths de outra máquina/disco ficarem no config.json)
+    cfg = load_config()
+    if cfg.get("base_dir") != str(BASE_DIR):
+        log.info("Atualizando base_dir: %s -> %s", cfg.get('base_dir'), str(BASE_DIR))
+        cfg["base_dir"] = str(BASE_DIR)
+        save_config(cfg)
+
+    # Criar pastas necessárias
+    for d in [INPUT_DIR, TRANSLATING_DIR, OUTPUT_DIR, ENGLISH_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
+
     # Inicializar arquivo de estado
     write_state({"status": "idle"})
 

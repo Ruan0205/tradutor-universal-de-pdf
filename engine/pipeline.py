@@ -75,11 +75,15 @@ def save_config(cfg: dict):
 
 CFG = load_config()
 
-INPUT_DIR = Path(CFG["base_dir"]) / "livros-para-traduzir"
-TRANSLATING_DIR = Path(CFG["base_dir"]) / "traduzindo"
-OUTPUT_DIR = Path(CFG["base_dir"]) / "traduzidos"
-ENGLISH_DIR = Path(CFG["base_dir"]) / "em-inges"
-LOG_FILE = Path(CFG["base_dir"]) / "translation.log"
+# SEMPRE usar diretório real calculado dinamicamente, nunca confiar no config
+# (o config pode ter path de outra máquina/disco)
+CFG["base_dir"] = str(BASE_DIR)
+
+INPUT_DIR = BASE_DIR / "livros-para-traduzir"
+TRANSLATING_DIR = BASE_DIR / "traduzindo"
+OUTPUT_DIR = BASE_DIR / "traduzidos"
+ENGLISH_DIR = BASE_DIR / "em-inges"
+LOG_FILE = BASE_DIR / "translation.log"
 
 # =====================================================================
 # LOGGING
@@ -1020,8 +1024,11 @@ class TranslationPipeline:
             if f.suffix.lower() == ".pdf" and not f.stem.endswith("_PT"):
                 dest = INPUT_DIR / f.name
                 if not dest.exists():
-                    shutil.move(str(f), str(dest))
-                    log.info("Recuperado de traduzindo/: %s", f.name)
+                    try:
+                        shutil.move(str(f), str(dest))
+                        log.info("Recuperado de traduzindo/: %s", f.name)
+                    except PermissionError:
+                        log.warning("Arquivo em uso, ignorando recuperação: %s", f.name)
         self._cleanup_translating_dir()
 
     @staticmethod
