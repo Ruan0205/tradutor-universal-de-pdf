@@ -227,7 +227,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
 <div class="sidebar">
   <div class="logo">
     <h2>📚 Tradutor Universal</h2>
-    <small>v1.8 • PDF • Ollama • AI</small>
+    <small>v1.9 • PDF • Ollama • AI</small>
   </div>
   <nav>
     <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
@@ -407,6 +407,32 @@ button { cursor:pointer; font-family:inherit; border:none; }
           </select>
         </div>
       </div>
+    </div>
+
+    <div class="section">
+      <h3>🖼️ IA de Texto em Imagens</h3>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">
+        Escolha como o texto detectado dentro de imagens será reconstruído após a tradução.
+      </p>
+      <div class="model-grid">
+        <div class="model-card" id="imgModeLegacy" onclick="setImageTextMode('legacy')">
+          <div class="info">
+            <h4>⚙️ Legacy (Padrão)</h4>
+            <small>Preenche a área com cor média e escreve o texto traduzido por cima. Mais rápido e estável.</small>
+          </div>
+          <button class="btn btn-sm btn-secondary">Usar</button>
+        </div>
+        <div class="model-card" id="imgModeAiRebuild" onclick="setImageTextMode('ai_rebuild')">
+          <div class="info">
+            <h4>🧠 IA Rebuild (Experimental)</h4>
+            <small>Apaga o texto original com inpainting e recria o texto traduzido tentando manter estilo visual da arte.</small>
+          </div>
+          <button class="btn btn-sm btn-secondary">Usar</button>
+        </div>
+      </div>
+      <small style="display:block;color:var(--text2);margin-top:8px;">
+        Quando "Somente páginas selecionáveis" está ativo, esse modo não roda em páginas OCR escaneadas inteiras.
+      </small>
     </div>
 
     <div class="section">
@@ -604,6 +630,32 @@ button { cursor:pointer; font-family:inherit; border:none; }
           <input id="cfgDpi" type="number">
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Processamento OCR/Imagem</label>
+          <select id="cfgComputeBackend">
+            <option value="cpu">CPU (compatibilidade máxima)</option>
+            <option value="gpu">GPU (DirectML/CUDA quando disponível)</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Inpainting IA: raio</label>
+          <input id="cfgInpaintRadius" type="number" min="1" max="12" step="1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>IA em Imagens: somente páginas selecionáveis</label>
+          <select id="cfgImageAiSelectableOnly">
+            <option value="true">Ativado (evita reconstrução OCR em página inteira)</option>
+            <option value="false">Desativado</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Pasta do pacote de fontes</label>
+          <input id="cfgFontPackDir">
+        </div>
+      </div>
       <button class="btn btn-primary" style="margin-top:16px;" onclick="saveSettings()">💾 Salvar Configurações</button>
     </div>
   </div>
@@ -761,6 +813,10 @@ async function saveSettings() {
     min_font_size: parseFloat(document.getElementById('cfgMinFont').value) || 5.0,
     min_font_ratio: parseFloat(document.getElementById('cfgMinRatio').value) || 0.65,
     render_dpi: parseInt(document.getElementById('cfgDpi').value) || 300,
+    compute_backend: document.getElementById('cfgComputeBackend').value,
+    image_inpaint_radius: parseInt(document.getElementById('cfgInpaintRadius').value) || 3,
+    image_ai_selectable_only: document.getElementById('cfgImageAiSelectableOnly').value === 'true',
+    font_pack_dir: document.getElementById('cfgFontPackDir').value || 'assets/fonts',
   };
   const r = await api('POST', '/api/config', cfg);
   toast(r.ok ? 'Configurações salvas!' : 'Erro ao salvar', !r.ok);
@@ -801,6 +857,12 @@ async function saveOllamaOptions() {
 async function setValMethod(method) {
   const r = await api('POST', '/api/config', { validation_method: method });
   toast(r.ok ? `Método: ${method}` : 'Erro', !r.ok);
+  refresh();
+}
+
+async function setImageTextMode(mode) {
+  const r = await api('POST', '/api/config', { image_text_mode: mode });
+  toast(r.ok ? `Texto em imagens: ${mode}` : 'Erro', !r.ok);
   refresh();
 }
 
@@ -1217,6 +1279,27 @@ function renderModels() {
     grid.innerHTML = '<div style="color:var(--text3);padding:20px;">Nenhum modelo disponível.</div>';
   }
 
+  // Image text mode cards
+  const imageMode = (cfg.image_text_mode || 'legacy').toLowerCase();
+  const cardLegacy = document.getElementById('imgModeLegacy');
+  const cardAi = document.getElementById('imgModeAiRebuild');
+  if (cardLegacy) {
+    cardLegacy.classList.toggle('active', imageMode === 'legacy');
+    const btn = cardLegacy.querySelector('button');
+    if (btn) {
+      btn.className = 'btn btn-sm ' + (imageMode === 'legacy' ? 'btn-primary' : 'btn-secondary');
+      btn.textContent = imageMode === 'legacy' ? 'Ativo' : 'Usar';
+    }
+  }
+  if (cardAi) {
+    cardAi.classList.toggle('active', imageMode === 'ai_rebuild');
+    const btn = cardAi.querySelector('button');
+    if (btn) {
+      btn.className = 'btn btn-sm ' + (imageMode === 'ai_rebuild' ? 'btn-primary' : 'btn-secondary');
+      btn.textContent = imageMode === 'ai_rebuild' ? 'Ativo' : 'Usar';
+    }
+  }
+
   // Language selects
   const srcSel = document.getElementById('sourceLang');
   const tgtSel = document.getElementById('targetLang');
@@ -1352,6 +1435,10 @@ function renderSettings() {
   document.getElementById('cfgMinFont').value = cfg.min_font_size || 5.0;
   document.getElementById('cfgMinRatio').value = cfg.min_font_ratio || 0.65;
   document.getElementById('cfgDpi').value = cfg.render_dpi || 300;
+  document.getElementById('cfgComputeBackend').value = (cfg.compute_backend || 'cpu').toLowerCase();
+  document.getElementById('cfgInpaintRadius').value = cfg.image_inpaint_radius || 3;
+  document.getElementById('cfgImageAiSelectableOnly').value = (cfg.image_ai_selectable_only ?? true) ? 'true' : 'false';
+  document.getElementById('cfgFontPackDir').value = cfg.font_pack_dir || 'assets/fonts';
 }
 
 // =============================================

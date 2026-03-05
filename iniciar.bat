@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title Tradutor Universal de PDF v1.8
+title Tradutor Universal de PDF v1.9
 
 set "NOPAUSE=0"
 for %%A in (%*) do (
@@ -12,7 +12,7 @@ call :set_paths
 
 echo.
 echo ================================================================
-echo   TRADUTOR UNIVERSAL DE PDF v1.8
+echo   TRADUTOR UNIVERSAL DE PDF v1.9
 echo ================================================================
 echo.
 

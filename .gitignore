@@ -41,6 +41,7 @@ engine/.deps_installed
 engine/.python_path
 engine/pipeline_state.json
 engine/pipeline_control.json
+assets/fonts/
 
 # IDE e SO
 .DS_Store

@@ -48,6 +48,8 @@ REQUIRED_PACKAGES = [
     "rapidocr-onnxruntime",
     "tqdm",
     "pystray",
+    "opencv-python",
+    "onnxruntime",
 ]
 
 # Windows process creation flags
@@ -89,7 +91,7 @@ def show_message(title: str, message: str, is_error: bool = False):
 
 def banner():
     cprint("=" * 60, "cyan")
-    cprint("TRADUTOR UNIVERSAL DE PDF v1.8", "bold")
+    cprint("TRADUTOR UNIVERSAL DE PDF v1.9", "bold")
     cprint("Traducao automatica com IA local (Ollama)", "cyan")
     cprint("=" * 60, "cyan")
 
@@ -101,6 +103,8 @@ def pkg_import_name(pkg: str) -> str:
         "rapidocr-onnxruntime": "rapidocr_onnxruntime",
         "tqdm": "tqdm",
         "pystray": "pystray",
+        "opencv-python": "cv2",
+        "onnxruntime": "onnxruntime",
     }
     return mapping.get(pkg, pkg.lower().replace("-", "_"))
 
@@ -527,7 +531,7 @@ def run_tray(server_proc: subprocess.Popen | None):
     icon = pystray.Icon(
         "tradutor_universal_pdf",
         create_tray_image(),
-        "Tradutor Universal de PDF v1.8",
+        "Tradutor Universal de PDF v1.9",
         menu,
     )
 

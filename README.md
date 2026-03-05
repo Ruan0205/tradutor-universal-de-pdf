@@ -1,4 +1,4 @@
-# 📚 Tradutor Universal de PDFs — v1.8
+# 📚 Tradutor Universal de PDFs — v1.9
 
 **Traduza livros PDF inteiros automaticamente usando modelos de IA local (Ollama).**
 
@@ -11,45 +11,38 @@
 ### 🎬 Demonstração em Vídeo
 
 <p align="center">
-  <video src="Video-projeto/Demonstrativo%20tradutor-universal-de-pdf.mp4" controls width="100%" preload="metadata"></video>
+  <a href="https://www.youtube.com/watch?v=_gnpUDYkeb8">▶ Assistir no YouTube</a>
 </p>
 
 <p align="center"><em>Vídeo demonstrativo do Tradutor Universal de PDFs em funcionamento.</em></p>
-<p align="center"><a href="Video-projeto/Demonstrativo%20tradutor-universal-de-pdf.mp4">▶ Abrir vídeo diretamente</a></p>
 
 ### 🖼️ Capturas do Projeto
-
-<p align="center">
-  <img src="imagens-telas/Tela%20do%20projeto.png" alt="Tela inicial do Tradutor Universal de PDFs — Dashboard em funcionamento" width="100%">
-</p>
-
-<p align="center"><em>Dashboard web do projeto em funcionamento — tradução de PDFs com IA local em tempo real.</em></p>
 
 #### 🖼️ Galeria de Telas
 
 #### 📚 Gerenciamento de Livros
 <p align="center">
-  <img src="imagens-telas/Tela%20livros.png" alt="Tela de gerenciamento da fila de livros" width="100%">
+  <img src="Imagens-telas/Tela%20livros.png" alt="Tela de gerenciamento da fila de livros" width="100%">
 </p>
 
 #### 🤖 Modelos de IA
 <p align="center">
-  <img src="imagens-telas/Tela%20modelos%20de%20IA.png" alt="Tela de seleção e configuração de modelos de IA" width="100%">
+  <img src="Imagens-telas/Tela%20modelos%20de%20IA.png" alt="Tela de seleção e configuração de modelos de IA" width="100%">
 </p>
 
 #### ⚙️ Configurações
 <p align="center">
-  <img src="imagens-telas/Tela%20configurações.png" alt="Tela de configurações gerais do pipeline" width="100%">
+  <img src="Imagens-telas/Tela%20configura%C3%A7%C3%B5es.png" alt="Tela de configurações gerais do pipeline" width="100%">
 </p>
 
 #### ✅ Validador
 <p align="center">
-  <img src="imagens-telas/Tela%20validador.png" alt="Tela de validação automática das traduções" width="100%">
+  <img src="Imagens-telas/Tela%20validador.png" alt="Tela de validação automática das traduções" width="100%">
 </p>
 
 #### 🔍 Visualizador Comparativo
 <p align="center">
-  <img src="imagens-telas/Tela%20visualizador.png" alt="Tela do visualizador comparativo entre original e tradução" width="100%">
+  <img src="Imagens-telas/Tela%20visualizador.png" alt="Tela do visualizador comparativo entre original e tradução" width="100%">
 </p>
 
 ---
@@ -59,6 +52,8 @@
 ### 🔄 Tradução Inteligente
 - **Tradução por blocos de texto** — preserva a estrutura, posição e formato original do PDF
 - **OCR integrado** (RapidOCR) — detecta e traduz texto em imagens e páginas escaneadas
+- **Reconstrução IA opcional em imagens** — modo `ai_rebuild` usa inpainting para remover texto original e recriar o texto traduzido (modo `legacy` é o padrão)
+- **Processamento seletivo de IA em imagens** — evita reconstrução de página OCR inteira quando configurado para páginas não selecionáveis
 - **Preservação de fontes** — identifica a categoria da fonte (serif, sans, mono) e aplica a mais semelhante
 - **Preservação de cores** — mantém a cor original do texto tanto em páginas de texto quanto em imagens
 - **Tradução em lote** — processa múltiplos PDFs automaticamente, em fila com prioridade
@@ -68,6 +63,7 @@
 - Compatível com **Ollama** (localhost)
 - Suporta qualquer modelo de tradução (ex: TranslateGemma, Llama, Gemma)
 - Parâmetros configuráveis: temperatura, top_p, num_ctx, GPU layers, threads, etc.
+- Seleção de backend de processamento OCR/imagem: **CPU** ou **GPU** (DirectML/CUDA quando disponível)
 - Troca de modelo em tempo real pelo dashboard
 
 ### 🌐 Idiomas
@@ -114,7 +110,9 @@
 O instalador faz automaticamente:
 - instala/configura Python portável (quando necessário);
 - cria o ambiente virtual;
-- instala dependências Python;
+- instala/atualiza dependências Python (pode rodar novamente para atualizar para novas versões);
+- tenta habilitar aceleração GPU para OCR/imagem via DirectML (quando disponível no Windows);
+- baixa um pacote extra de fontes em `assets/fonts`;
 - verifica/instala Ollama;
 - baixa automaticamente o modelo `translategemma` (com fallback para `TranslateGemma`);
 - cria as pastas de trabalho do projeto.
@@ -156,7 +154,9 @@ Se o `instalador.bat` não puder ser usado, você pode instalar manualmente:
 python -m venv .venv
 .venv\Scripts\activate
 pip install --upgrade pip
-pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm pystray
+pip install PyMuPDF Pillow rapidocr-onnxruntime tqdm pystray opencv-python onnxruntime
+# opcional para GPU no Windows (AMD/NVIDIA/Intel):
+pip install onnxruntime-directml
 ollama pull translategemma
 ```
 
@@ -175,8 +175,14 @@ ollama pull translategemma
 
 ---
 
-## 📋 Changelog v1.8
+## 📋 Changelog v1.9
 
+- Modo novo em imagens: `ai_rebuild` (inpainting + reconstrução de texto) com `legacy` mantido como padrão
+- Controle de processamento OCR/imagem por configuração (`CPU` ou `GPU`)
+- Estratégia para evitar reconstrução IA massiva em páginas escaneadas inteiras (por padrão, somente pontos de imagem em páginas selecionáveis)
+- Instalação/atualização de pacote de fontes extras em `assets/fonts`
+- Instalador atualizado para ser reexecutável e atualizar dependências em novas versões
+- README atualizado com galeria de imagens do diretório `Imagens-telas` e vídeo via YouTube
 - Seleção de PDFs por explorador de arquivos do Windows com suporte a múltiplos arquivos
 - Inicialização em segundo plano com ícone na bandeja do Windows (sem terminal fixo aberto)
 - Dashboard fixado em `http://localhost:8050/` ao iniciar
@@ -218,7 +224,7 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 
 ---
 
-*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.8*
+*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.9*
 
 ## 🙏 Créditos e Reconhecimentos
 

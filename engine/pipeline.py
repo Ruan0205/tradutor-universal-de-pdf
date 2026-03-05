@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import fitz  # pymupdf
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 # =====================================================================
 # CONFIGURAÇÃO - lida do config.json
@@ -50,6 +55,11 @@ DEFAULT_CONFIG = {
     "sort_order": "smallest_first",
     "custom_order": [],
     "validation_method": "structural",
+    "image_text_mode": "legacy",
+    "compute_backend": "cpu",
+    "image_ai_selectable_only": True,
+    "image_inpaint_radius": 3,
+    "font_pack_dir": "assets/fonts",
     "ollama_options": {
         "temperature": 0.4,
         "top_p": 0.9,
@@ -420,9 +430,84 @@ class TranslationEngine:
 
 class OCREngine:
     def __init__(self):
+        self.backend = "cpu"
+        self.provider_hint = "CPUExecutionProvider"
+        self._build_engine()
+
+    def _build_engine(self):
         from rapidocr_onnxruntime import RapidOCR
-        self.ocr = RapidOCR()
-        log.info("RapidOCR inicializado.")
+
+        requested_backend = str(CFG.get("compute_backend", "cpu")).strip().lower()
+        if requested_backend not in {"cpu", "gpu"}:
+            requested_backend = "cpu"
+
+        kwargs = {}
+        if requested_backend == "gpu":
+            # On Windows, DirectML is the most compatible GPU path (incluindo AMD).
+            if os.name == "nt":
+                kwargs["use_dml"] = True
+            else:
+                kwargs["use_cuda"] = True
+
+        try:
+            self.ocr = RapidOCR(**kwargs)
+            self.backend = requested_backend
+            self.provider_hint = self._detect_provider()
+            log.info(
+                "RapidOCR inicializado (backend=%s, provider=%s).",
+                self.backend,
+                self.provider_hint,
+            )
+            if requested_backend == "gpu" and self.provider_hint.lower().startswith("cpuexecutionprovider"):
+                log.warning(
+                    "GPU foi solicitado, mas o provider ativo do OCR permaneceu em CPU. "
+                    "Verifique onnxruntime-directml/cuda para aceleração real."
+                )
+            return
+        except Exception as e:
+            if requested_backend != "gpu":
+                raise
+            log.warning(
+                "Falha ao iniciar RapidOCR com GPU (%s). Fallback para CPU.",
+                e,
+            )
+            self.ocr = RapidOCR()
+            self.backend = "cpu"
+            self.provider_hint = self._detect_provider()
+            log.info(
+                "RapidOCR inicializado em fallback CPU (provider=%s).",
+                self.provider_hint,
+            )
+
+    def _detect_provider(self) -> str:
+        providers = []
+        for part_name in ("text_det", "text_cls", "text_rec"):
+            part = getattr(self.ocr, part_name, None)
+            infer_wrapper = getattr(part, "session", None)
+            session = getattr(infer_wrapper, "session", None)
+            if session is None:
+                continue
+            try:
+                cur = session.get_providers()
+                if cur:
+                    providers.append(cur[0])
+            except Exception:
+                continue
+        if providers:
+            return providers[0]
+        return "CPUExecutionProvider"
+
+    def ensure_backend(self):
+        requested_backend = str(CFG.get("compute_backend", "cpu")).strip().lower()
+        if requested_backend not in {"cpu", "gpu"}:
+            requested_backend = "cpu"
+        if requested_backend != self.backend:
+            log.info(
+                "Alteracao de backend OCR detectada (%s -> %s). Reinicializando OCR.",
+                self.backend,
+                requested_backend,
+            )
+            self._build_engine()
 
     def ocr_image(self, img_bytes: bytes) -> list:
         try:
@@ -524,9 +609,14 @@ class PDFTranslator:
     def __init__(self, translator: TranslationEngine, ocr_engine: OCREngine):
         self.translator = translator
         self.ocr = ocr_engine
+        self._font_pack_cache_key = ""
+        self._image_font_paths = []
+        self._image_font_choice_cache: Dict[Tuple[int, int, int], Optional[str]] = {}
+        self._refresh_image_font_candidates(force=True)
 
     def translate_pdf(self, input_path: Path, output_path: Path,
                       progress_callback=None):
+        self._refresh_image_font_candidates()
         log.info("Abrindo PDF: %s", input_path.name)
         doc = fitz.open(str(input_path))
         total = doc.page_count
@@ -546,7 +636,7 @@ class PDFTranslator:
                     self._translate_scanned_page(doc, page, page_idx)
                 else:
                     self._translate_text_page(page)
-                    self._translate_image_blocks(doc, page)
+                    self._translate_image_blocks(doc, page, is_scanned=False)
             except Exception:
                 log.error("Erro pag %d:\n%s", page_idx + 1, traceback.format_exc())
 
@@ -573,7 +663,11 @@ class PDFTranslator:
             if not lines:
                 continue
             line_texts = self._extract_line_texts(lines)
-            block_text = self._extract_block_text(lines).strip()
+            table_like = self._is_table_like_block(line_texts)
+            if table_like:
+                block_text = "\n".join(line_texts).strip()
+            else:
+                block_text = self._extract_block_text(lines).strip()
             if not block_text:
                 continue
             block_rect = fitz.Rect(block["bbox"])
@@ -586,6 +680,7 @@ class PDFTranslator:
             style["line_lengths"] = [max(1, len(t.strip())) for t in line_texts if t.strip()] or [max(1, len(block_text))]
             style["line_height_ratio"] = self._estimate_line_height_ratio(lines, style["size"], block_rect, style["line_count"])
             style["over_image"] = self._rect_overlaps_any(block_rect, image_rects)
+            style["is_table_like"] = table_like
             block_infos.append((block_rect, block_text, style))
         if not block_infos:
             return
@@ -605,11 +700,13 @@ class PDFTranslator:
         for rect, text, style in changes:
             self._insert_block_text(page, rect, text, style, layout_mode)
 
-    def _translate_image_blocks(self, doc: fitz.Document, page: fitz.Page):
+    def _translate_image_blocks(self, doc: fitz.Document, page: fitz.Page, is_scanned: bool):
         layout_mode = self._get_layout_mode()
+        image_mode = self._get_image_text_mode(is_scanned=is_scanned)
         image_list = page.get_images(full=True)
         if not image_list:
             return
+
         for img_info in image_list:
             xref = img_info[0]
             try:
@@ -619,52 +716,46 @@ class PDFTranslator:
             img_bytes = base_image.get("image")
             if not img_bytes:
                 continue
+
             ocr_results = self.ocr.ocr_image(img_bytes)
             if not ocr_results:
                 continue
-            valid_results = [r for r in ocr_results
-                           if len(r) >= 2 and TranslationEngine._should_translate(r[1])]
+            valid_results = [
+                r for r in ocr_results
+                if len(r) >= 2 and TranslationEngine._should_translate(r[1])
+            ]
             if not valid_results:
                 continue
+
             ocr_texts = [r[1] for r in valid_results]
             translations = self.translator.translate_batch(ocr_texts)
             try:
                 pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
             except Exception:
                 continue
-            draw = ImageDraw.Draw(pil_img)
-            modified = False
-            for idx, result in enumerate(valid_results):
-                trans = translations[idx] if idx < len(translations) else result[1]
-                if trans == result[1]:
-                    continue
-                bbox_points = result[0]
-                xs = [p[0] for p in bbox_points]
-                ys = [p[1] for p in bbox_points]
-                x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
-                if (x1 - x0) < 5 or (y1 - y0) < 5:
-                    continue
-                text_color = self._sample_text_color(pil_img, x0, y0, x1, y1)
-                bg = self._sample_background_color(pil_img, x0, y0, x1, y1)
-                draw.rectangle([x0, y0, x1, y1], fill=bg)
-                font_size = max(8, int((y1 - y0) * 0.75))
-                pil_font = self._get_pil_font(font_size)
-                source_line_count = max(1, len(str(result[1]).splitlines()))
-                self._draw_fitted_text(
-                    draw, trans, x0, y0, x1, y1, pil_font, font_size,
-                    fill_color=text_color, source_line_count=source_line_count, mode=layout_mode,
-                )
-                modified = True
-            if modified:
-                buf = io.BytesIO()
-                pil_img.save(buf, format="PNG")
-                try:
-                    page.replace_image(xref, stream=buf.getvalue())
-                except Exception as e:
-                    log.warning("Não substituiu imagem xref=%d: %s", xref, e)
+
+            modified = self._render_ocr_text_on_image(
+                pil_img=pil_img,
+                valid_results=valid_results,
+                translations=translations,
+                layout_mode=layout_mode,
+                image_mode=image_mode,
+            )
+            if not modified:
+                continue
+
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            try:
+                page.replace_image(xref, stream=buf.getvalue())
+            except Exception as e:
+                log.warning("Não substituiu imagem xref=%d: %s", xref, e)
 
     def _translate_scanned_page(self, doc, page, page_idx):
+        del doc, page_idx
         layout_mode = self._get_layout_mode()
+        # Por padrão, não usa reconstrução IA em página escaneada inteira para evitar custo excessivo.
+        image_mode = self._get_image_text_mode(is_scanned=True)
         mat = fitz.Matrix(CFG["render_dpi"] / 72, CFG["render_dpi"] / 72)
         pix = page.get_pixmap(matrix=mat, alpha=False)
         img_bytes = pix.tobytes("png")
@@ -672,36 +763,23 @@ class PDFTranslator:
         ocr_results = self.ocr.ocr_image(img_bytes)
         if not ocr_results:
             return
-        valid_results = [r for r in ocr_results
-                        if len(r) >= 2 and TranslationEngine._should_translate(r[1])]
+
+        valid_results = [
+            r for r in ocr_results
+            if len(r) >= 2 and TranslationEngine._should_translate(r[1])
+        ]
         if not valid_results:
             return
+
         ocr_texts = [r[1] for r in valid_results]
         translations = self.translator.translate_batch(ocr_texts)
-        draw = ImageDraw.Draw(pil_img)
-        modified = False
-        for idx, result in enumerate(valid_results):
-            trans = translations[idx] if idx < len(translations) else result[1]
-            if trans == result[1]:
-                continue
-            bbox_points = result[0]
-            xs = [p[0] for p in bbox_points]
-            ys = [p[1] for p in bbox_points]
-            x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
-            box_h = y1 - y0
-            if box_h < 3:
-                continue
-            text_color = self._sample_text_color(pil_img, x0, y0, x1, y1)
-            bg = self._sample_background_color(pil_img, x0, y0, x1, y1)
-            draw.rectangle([x0, y0, x1, y1], fill=bg)
-            font_size = max(8, int(box_h * 0.78))
-            pil_font = self._get_pil_font(font_size)
-            source_line_count = max(1, len(str(result[1]).splitlines()))
-            self._draw_fitted_text(
-                draw, trans, x0, y0, x1, y1, pil_font, font_size,
-                fill_color=text_color, source_line_count=source_line_count, mode=layout_mode,
-            )
-            modified = True
+        modified = self._render_ocr_text_on_image(
+            pil_img=pil_img,
+            valid_results=valid_results,
+            translations=translations,
+            layout_mode=layout_mode,
+            image_mode=image_mode,
+        )
         if modified:
             buf = io.BytesIO()
             pil_img.save(buf, format="PNG")
@@ -712,6 +790,105 @@ class PDFTranslator:
             page.insert_image(page_rect, stream=buf.getvalue())
 
     # -- Utilitários --
+
+    @staticmethod
+    def _get_image_text_mode(is_scanned: bool) -> str:
+        mode = str(CFG.get("image_text_mode", "legacy")).strip().lower()
+        if mode not in {"legacy", "ai_rebuild"}:
+            mode = "legacy"
+        if is_scanned and CFG.get("image_ai_selectable_only", True):
+            return "legacy"
+        return mode
+
+    def _render_ocr_text_on_image(
+        self,
+        pil_img: Image.Image,
+        valid_results: list,
+        translations: list,
+        layout_mode: str,
+        image_mode: str,
+    ) -> bool:
+        entries = self._prepare_image_ocr_entries(pil_img, valid_results, translations)
+        if not entries:
+            return False
+
+        if image_mode == "ai_rebuild" and cv2 is not None:
+            self._inpaint_entries_with_ai(pil_img, entries)
+
+        draw = ImageDraw.Draw(pil_img)
+        modified = False
+        for entry in entries:
+            x0, y0, x1, y1 = entry["bbox"]
+            if (x1 - x0) < 5 or (y1 - y0) < 5:
+                continue
+
+            if image_mode == "legacy" or cv2 is None:
+                draw.rectangle([x0, y0, x1, y1], fill=entry["background_color"])
+
+            font_size = max(8, int((y1 - y0) * 0.75))
+            preferred_font = self._choose_image_font_path(entry["translated"], x1 - x0, y1 - y0)
+            pil_font = self._get_pil_font(font_size, preferred_path=preferred_font)
+            self._draw_fitted_text(
+                draw,
+                entry["translated"],
+                x0,
+                y0,
+                x1,
+                y1,
+                pil_font,
+                font_size,
+                fill_color=entry["text_color"],
+                source_line_count=entry["source_line_count"],
+                mode=layout_mode,
+                preferred_font_path=preferred_font,
+            )
+            modified = True
+        return modified
+
+    def _prepare_image_ocr_entries(self, pil_img: Image.Image, valid_results: list, translations: list) -> List[dict]:
+        entries: List[dict] = []
+        for idx, result in enumerate(valid_results):
+            original = str(result[1] if len(result) > 1 else "").strip()
+            translated = str(translations[idx] if idx < len(translations) else original).strip()
+            if not translated or translated == original:
+                continue
+
+            bbox_points = result[0]
+            xs = [p[0] for p in bbox_points]
+            ys = [p[1] for p in bbox_points]
+            x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+            if (x1 - x0) < 5 or (y1 - y0) < 5:
+                continue
+
+            entries.append({
+                "points": bbox_points,
+                "bbox": (x0, y0, x1, y1),
+                "original": original,
+                "translated": translated,
+                "source_line_count": max(1, len(original.splitlines())),
+                "background_color": self._sample_background_color(pil_img, x0, y0, x1, y1),
+                "text_color": self._sample_text_color(pil_img, x0, y0, x1, y1),
+            })
+        return entries
+
+    def _inpaint_entries_with_ai(self, pil_img: Image.Image, entries: List[dict]):
+        np_img = np.array(pil_img)
+        cv_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+        inpaint_radius = int(CFG.get("image_inpaint_radius", 3))
+        inpaint_radius = max(1, min(12, inpaint_radius))
+
+        for entry in entries:
+            points = np.array(entry["points"], dtype=np.int32).reshape(-1, 2)
+            if points.size == 0:
+                continue
+            mask = np.zeros(cv_img.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(mask, [points], 255)
+            kernel = np.ones((3, 3), np.uint8)
+            mask = cv2.dilate(mask, kernel, iterations=1)
+            cv_img = cv2.inpaint(cv_img, mask, inpaint_radius, cv2.INPAINT_TELEA)
+
+        rebuilt = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        pil_img.paste(Image.fromarray(rebuilt))
 
     def _extract_block_text(self, lines: list) -> str:
         parts = []
@@ -729,6 +906,19 @@ class PDFTranslator:
             if line_text:
                 results.append(line_text)
         return results
+
+    @staticmethod
+    def _is_table_like_block(line_texts: List[str]) -> bool:
+        if len(line_texts) < 3:
+            return False
+        short_lines = sum(1 for ln in line_texts if len(ln) <= 36)
+        numeric_lines = sum(1 for ln in line_texts if re.search(r"\d", ln))
+        divider_lines = sum(1 for ln in line_texts if any(ch in ln for ch in ("|", ";", ":", "\t")))
+        if short_lines >= max(2, int(len(line_texts) * 0.6)) and numeric_lines >= 2:
+            return True
+        if divider_lines >= 1 and short_lines >= 2:
+            return True
+        return False
 
     @staticmethod
     def _estimate_line_height_ratio(lines: list, font_size: float, block_rect: fitz.Rect, line_count: int) -> float:
@@ -769,19 +959,35 @@ class PDFTranslator:
         return mode
 
     def _adapt_text_layout(self, translated: str, original: str, style: dict, mode: str) -> str:
-        text = re.sub(r"\s+", " ", translated or "").strip()
-        if not text:
+        raw = (translated or "").replace("\r\n", "\n")
+        normalized_lines = []
+        for line in raw.splitlines():
+            clean = re.sub(r"\s+", " ", line).strip()
+            if clean:
+                normalized_lines.append(clean)
+        text_multiline = "\n".join(normalized_lines) if normalized_lines else re.sub(r"\s+", " ", raw).strip()
+        if not text_multiline:
             return original
 
         line_count = max(1, int(style.get("line_count", 1)))
-        line_lengths = style.get("line_lengths") or [max(1, len(original or text))]
+        line_lengths = style.get("line_lengths") or [max(1, len(original or text_multiline))]
+        table_like = bool(style.get("is_table_like"))
+
+        if table_like:
+            return self._rewrap_text_with_budgets(
+                text=text_multiline,
+                line_count=line_count,
+                line_budgets=line_lengths,
+                expansion=1.08,
+                keep_exact_lines=True,
+            )
 
         if mode == "structural":
-            return text
+            return text_multiline.replace("\n", " ")
 
         if mode == "char_count":
             return self._rewrap_text_with_budgets(
-                text=text,
+                text=text_multiline.replace("\n", " "),
                 line_count=line_count,
                 line_budgets=line_lengths,
                 expansion=1.05,
@@ -790,7 +996,7 @@ class PDFTranslator:
 
         # hybrid: preserva número de linhas do bloco original e mantém texto no mesmo espaço
         return self._rewrap_text_with_budgets(
-            text=text,
+            text=text_multiline,
             line_count=line_count,
             line_budgets=line_lengths,
             expansion=1.25,
@@ -859,10 +1065,14 @@ class PDFTranslator:
         original_size = style["size"]
         color = style["color"]
         base_ratio = CFG["min_font_ratio"]
+        if style.get("is_table_like"):
+            base_ratio = max(base_ratio, 0.78)
+        elif mode == "structural":
+            base_ratio = max(base_ratio, 0.76)
         if mode == "char_count":
-            base_ratio = min(base_ratio, 0.55)
+            base_ratio = min(base_ratio, 0.62)
         elif mode == "hybrid":
-            base_ratio = min(base_ratio, 0.50)
+            base_ratio = min(base_ratio, 0.58)
         min_size = max(4.0, CFG["min_font_size"], original_size * base_ratio)
         lineheight = style.get("line_height_ratio", 1.2) if mode == "hybrid" else None
 
@@ -874,6 +1084,7 @@ class PDFTranslator:
 
         for candidate_text in texts_to_try:
             current_size = original_size
+            shrink_step = 0.25 if style.get("is_table_like") or mode == "structural" else 0.5
             while current_size >= min_size:
                 kwargs = {
                     "fontname": font_name,
@@ -886,7 +1097,7 @@ class PDFTranslator:
                 rc = page.insert_textbox(rect, candidate_text, **kwargs)
                 if rc >= 0:
                     return
-                current_size -= 0.5
+                current_size -= shrink_step
 
         fallback_kwargs = {
             "fontname": font_name,
@@ -899,12 +1110,13 @@ class PDFTranslator:
         page.insert_textbox(rect, texts_to_try[-1], **fallback_kwargs)
 
     def _draw_fitted_text(self, draw, text, x0, y0, x1, y1, font, base_size,
-                          fill_color="black", source_line_count: int = 1, mode: str = "structural"):
+                          fill_color="black", source_line_count: int = 1, mode: str = "structural",
+                          preferred_font_path: Optional[str] = None):
         box_w = x1 - x0
         box_h = y1 - y0
         current_size = base_size
         while current_size >= 6:
-            test_font = self._get_pil_font(current_size)
+            test_font = self._get_pil_font(current_size, preferred_path=preferred_font_path)
             lines = self._layout_image_text(
                 draw=draw,
                 text=text,
@@ -933,7 +1145,7 @@ class PDFTranslator:
                     y_cursor += line_h + spacing
                 return
             current_size -= 1
-        tiny_font = self._get_pil_font(max(6, current_size))
+        tiny_font = self._get_pil_font(max(6, current_size), preferred_path=preferred_font_path)
         draw.text((x0 + 1, y0), text, fill=fill_color, font=tiny_font)
 
     @staticmethod
@@ -967,6 +1179,78 @@ class PDFTranslator:
                 lines[idx:idx + 1] = [" ".join(parts[:cut]), " ".join(parts[cut:])]
         return lines
 
+    def _build_image_font_candidates(self) -> List[str]:
+        candidates: List[str] = []
+
+        font_pack_dir_cfg = Path(str(CFG.get("font_pack_dir", "assets/fonts")))
+        font_pack_dir = font_pack_dir_cfg if font_pack_dir_cfg.is_absolute() else (BASE_DIR / font_pack_dir_cfg)
+        if font_pack_dir.exists():
+            for ext in ("*.ttf", "*.otf", "*.ttc"):
+                for fp in sorted(font_pack_dir.glob(ext)):
+                    candidates.append(str(fp))
+
+        win_fonts = Path("C:/Windows/Fonts")
+        preferred_names = [
+            "arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf",
+            "calibri.ttf", "calibrib.ttf", "calibrii.ttf", "calibriz.ttf",
+            "times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf",
+            "consola.ttf", "consolab.ttf", "consolai.ttf", "consolaz.ttf",
+            "cambria.ttc", "segoeui.ttf", "segoeuib.ttf", "segoeuii.ttf",
+        ]
+        for name in preferred_names:
+            p = win_fonts / name
+            if p.exists():
+                candidates.append(str(p))
+
+        # Deduplicar mantendo ordem.
+        seen = set()
+        unique = []
+        for path in candidates:
+            if path.lower() in seen:
+                continue
+            seen.add(path.lower())
+            unique.append(path)
+        return unique
+
+    def _refresh_image_font_candidates(self, force: bool = False):
+        cache_key = str(CFG.get("font_pack_dir", "assets/fonts")).strip().lower()
+        if not force and cache_key == self._font_pack_cache_key:
+            return
+        self._font_pack_cache_key = cache_key
+        self._image_font_paths = self._build_image_font_candidates()
+        self._image_font_choice_cache.clear()
+
+    def _choose_image_font_path(self, text: str, box_w: float, box_h: float) -> Optional[str]:
+        if not self._image_font_paths:
+            return None
+        key = (max(1, len(text)), int(max(1, box_w) // 6), int(max(1, box_h) // 4))
+        if key in self._image_font_choice_cache:
+            return self._image_font_choice_cache[key]
+
+        probe_text = text[: min(24, len(text))] or "Aa"
+        probe_size = max(10, int(min(box_h, 64) * 0.7))
+        best_path = None
+        best_score = None
+
+        for path in self._image_font_paths[:32]:
+            try:
+                probe_font = ImageFont.truetype(path, probe_size)
+                bbox = probe_font.getbbox(probe_text)
+                w = max(1, bbox[2] - bbox[0])
+                h = max(1, bbox[3] - bbox[1])
+            except Exception:
+                continue
+
+            wr = box_w / w
+            hr = box_h / h
+            score = abs(wr - hr) + abs((w / h) - (max(1, len(probe_text)) / 2.2))
+            if best_score is None or score < best_score:
+                best_score = score
+                best_path = path
+
+        self._image_font_choice_cache[key] = best_path
+        return best_path
+
     @staticmethod
     def _int_to_rgb(color) -> tuple:
         if isinstance(color, (list, tuple)) and len(color) >= 3:
@@ -981,26 +1265,35 @@ class PDFTranslator:
     @staticmethod
     def _sample_background_color(img, x0, y0, x1, y1) -> tuple:
         w, h = img.size
-        margin = 2
+        margin = 3
         samples = []
-        for px, py in [
-            (max(0, int(x0) - margin), max(0, int(y0) - margin)),
-            (min(w - 1, int(x1) + margin), max(0, int(y0) - margin)),
-            (max(0, int(x0) - margin), min(h - 1, int(y1) + margin)),
-            (min(w - 1, int(x1) + margin), min(h - 1, int(y1) + margin)),
-        ]:
+        x0i, y0i, x1i, y1i = int(x0), int(y0), int(x1), int(y1)
+        points = [
+            (max(0, x0i - margin), max(0, y0i - margin)),
+            (min(w - 1, x1i + margin), max(0, y0i - margin)),
+            (max(0, x0i - margin), min(h - 1, y1i + margin)),
+            (min(w - 1, x1i + margin), min(h - 1, y1i + margin)),
+            (max(0, (x0i + x1i) // 2), max(0, y0i - margin)),
+            (max(0, (x0i + x1i) // 2), min(h - 1, y1i + margin)),
+            (max(0, x0i - margin), max(0, (y0i + y1i) // 2)),
+            (min(w - 1, x1i + margin), max(0, (y0i + y1i) // 2)),
+        ]
+        for px, py in points:
             samples.append(img.getpixel((px, py)))
         return tuple(int(sum(c[i] for c in samples) / len(samples)) for i in range(3))
 
     @staticmethod
     def _sample_text_color(img, x0, y0, x1, y1):
-        """Sample the dominant text (dark) color from the original image region."""
+        """Sample likely foreground color preserving contrast versus local background."""
         x0i, y0i, x1i, y1i = int(x0), int(y0), int(x1), int(y1)
         w, h = img.size
         x0i, y0i = max(0, x0i), max(0, y0i)
         x1i, y1i = min(w - 1, x1i), min(h - 1, y1i)
         if x1i <= x0i or y1i <= y0i:
             return "black"
+
+        bg = PDFTranslator._sample_background_color(img, x0, y0, x1, y1)
+
         pixels = []
         step_y = max(1, (y1i - y0i) // 10)
         step_x = max(1, (x1i - x0i) // 10)
@@ -1009,17 +1302,32 @@ class PDFTranslator:
                 pixels.append(img.getpixel((px, py)))
         if not pixels:
             return "black"
-        avg_brightness = sum(sum(p[:3]) for p in pixels) / (len(pixels) * 3)
-        dark_pixels = [p for p in pixels if sum(p[:3]) / 3 < avg_brightness * 0.7]
-        if not dark_pixels or len(dark_pixels) < 3:
-            return "black"
-        r = int(sum(p[0] for p in dark_pixels) / len(dark_pixels))
-        g = int(sum(p[1] for p in dark_pixels) / len(dark_pixels))
-        b = int(sum(p[2] for p in dark_pixels) / len(dark_pixels))
+
+        by_contrast = sorted(
+            pixels,
+            key=lambda p: abs(int(p[0]) - int(bg[0])) + abs(int(p[1]) - int(bg[1])) + abs(int(p[2]) - int(bg[2])),
+            reverse=True,
+        )
+        take = by_contrast[: max(3, len(by_contrast) // 3)]
+        contrast = sum(abs(int(p[0]) - int(bg[0])) + abs(int(p[1]) - int(bg[1])) + abs(int(p[2]) - int(bg[2])) for p in take) / len(take)
+        if contrast < 24:
+            # Fallback para preto/branco conforme luminosidade do fundo.
+            bg_luma = (bg[0] + bg[1] + bg[2]) / 3
+            return (0, 0, 0) if bg_luma > 140 else (245, 245, 245)
+
+        r = int(sum(int(p[0]) for p in take) / len(take))
+        g = int(sum(int(p[1]) for p in take) / len(take))
+        b = int(sum(int(p[2]) for p in take) / len(take))
         return (r, g, b)
 
     @staticmethod
-    def _get_pil_font(size: int, bold=False, italic=False):
+    def _get_pil_font(size: int, bold=False, italic=False, preferred_path: Optional[str] = None):
+        if preferred_path:
+            try:
+                return ImageFont.truetype(preferred_path, size)
+            except Exception:
+                pass
+
         font_path = get_windows_font_path(bold=bold, italic=italic)
         if font_path:
             try:
@@ -1046,6 +1354,7 @@ class TranslationPipeline:
         """Executa o pipeline. Se retranslate_file, retraduz apenas esse livro."""
         write_control({"command": "run", "model": self.translator.model})
         self._recover_translating_dir()
+        self.ocr.ensure_backend()
 
         if retranslate_file:
             result = self._retranslate_single(retranslate_file)
@@ -1075,6 +1384,7 @@ class TranslationPipeline:
         for i, (size, pdf_path) in enumerate(pdfs, 1):
             # Reload config to pick up live changes (language, options, order)
             CFG.update(load_config())
+            self.ocr.ensure_backend()
 
             ctrl = check_control(self.translator)
             if ctrl == "stop":
