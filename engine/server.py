@@ -459,9 +459,35 @@ def get_full_status() -> dict:
         eta_str = _fmt_duration(eta_seconds)
         finish_time = (datetime.now() + timedelta(seconds=eta_seconds)).strftime("%d/%m %H:%M")
     else:
-        eta_str = "Calculando..."
-        finish_time = "--"
         sec_per_mb = None
+        eta_str = None
+        finish_time = None
+        # Estimar a partir do progresso de páginas do livro atual
+        cur = state.get("current_book")
+        cur_page = state.get("current_page", 0)
+        total_pages = state.get("total_pages", 0)
+        if cur and cur.get("start_time") and cur_page > 0 and total_pages > 0:
+            try:
+                started = datetime.fromisoformat(cur["start_time"])
+                elapsed = (datetime.now() - started).total_seconds()
+                sec_per_page = elapsed / cur_page
+                remaining_pages = total_pages - cur_page
+                remaining_cur = remaining_pages * sec_per_page
+                # Estimar sec_per_mb a partir do livro atual
+                cur_size = cur.get("size_mb", 1)
+                if cur_size > 0 and total_pages > 0:
+                    pages_per_mb = total_pages / cur_size
+                    sec_per_mb = sec_per_page * pages_per_mb
+                # Tempo restante dos livros na fila
+                remaining_queue = sum(b["size_mb"] for b in books["input"]) * sec_per_mb if sec_per_mb else 0
+                total_remaining = remaining_cur + remaining_queue
+                eta_str = _fmt_duration(total_remaining)
+                finish_time = (datetime.now() + timedelta(seconds=total_remaining)).strftime("%d/%m %H:%M")
+            except Exception:
+                pass
+        if eta_str is None:
+            eta_str = "Calculando..."
+            finish_time = "--"
 
     # Current book elapsed
     cur_elapsed = None
@@ -470,6 +496,18 @@ def get_full_status() -> dict:
         try:
             started = datetime.fromisoformat(cur["start_time"])
             cur_elapsed = (datetime.now() - started).total_seconds()
+        except Exception:
+            pass
+
+    # Tempo total gasto: livros completos + livro atual em progresso
+    total_elapsed = total_time + (cur_elapsed or 0)
+
+    # Tempo desde o início da pipeline
+    pipeline_elapsed = None
+    pipeline_start = state.get("pipeline_start")
+    if pipeline_start and effective_status in ("running", "paused"):
+        try:
+            pipeline_elapsed = (datetime.now() - datetime.fromisoformat(pipeline_start)).total_seconds()
         except Exception:
             pass
 
@@ -486,6 +524,8 @@ def get_full_status() -> dict:
             "completed": completed,
             "total": total,
             "total_time_sec": total_time,
+            "total_elapsed_sec": total_elapsed,
+            "pipeline_elapsed_sec": pipeline_elapsed,
             "sec_per_mb": round(sec_per_mb, 1) if sec_per_mb else None,
             "eta_str": eta_str,
             "finish_time": finish_time,
@@ -568,10 +608,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Serve PDF files
         if path.startswith("/pdf/translated/"):
             fname = unquote(path[len("/pdf/translated/"):])
-            return self._serve_pdf(OUTPUT_DIR / fname)
+            target = (OUTPUT_DIR / fname).resolve()
+            if not str(target).startswith(str(OUTPUT_DIR.resolve())):
+                return self._error(403, "Forbidden")
+            return self._serve_pdf(target)
         if path.startswith("/pdf/original/"):
             fname = unquote(path[len("/pdf/original/"):])
-            return self._serve_pdf(ENGLISH_DIR / fname)
+            target = (ENGLISH_DIR / fname).resolve()
+            if not str(target).startswith(str(ENGLISH_DIR.resolve())):
+                return self._error(403, "Forbidden")
+            return self._serve_pdf(target)
 
         # Serve static files
         if path == "/" or path == "/index.html":

@@ -1,7 +1,7 @@
 {
   "ollama_url": "http://localhost:11434",
   "model_name": "TranslateGemma",
-  "base_dir": "E:\\livros-para-traduzir\\testecode",
+  "base_dir": "AUTO",
   "validation_model": "TranslateGemma",
   "validation_pages": 12,
   "validation_method": "hybrid",

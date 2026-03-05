@@ -18,23 +18,34 @@ env/
 # Python portável instalado pelo instalador
 python-portable/
 
-# Pastas de PDFs do usuário
-../livros-para-traduzir/*.pdf
-../traduzidos/*.pdf
-../em-inges/*.pdf
-../traduzindo/*.pdf
+# Pastas de PDFs do usuário (criadas pós-instalação)
+../livros-para-traduzir/
+../traduzidos/
+../em-inges/
+../traduzindo/
 
 # Arquivos de log
 *.log
 ../validation_report.log
 ../translation.log
 
-# Arquivos temporários do sistema
+# Arquivos temporários do sistema (criados pós-instalação)
 engine/server_port.txt
 engine/.deps_installed
 engine/.python_path
+engine/pipeline_state.json
+engine/pipeline_control.json
+
+# IDE e SO
 .DS_Store
 Thumbs.db
+.vscode/
+
+# Duplicata de diretório gerada
+tradutor-universal-de-pdf/
+
+# Arquivos do workspace VSCode
+*.code-workspace
 
 # Arquivos de teste temporários
 teste-instalador.bat
@@ -45,3 +56,7 @@ teste-instalador.bat
 # Arquivos temporários do Windows
 *.tmp
 *.temp
+
+# Imagens e vídeos do projeto (documentação externa)
+imagens-telas/
+Video-projeto/

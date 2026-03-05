@@ -227,7 +227,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
 <div class="sidebar">
   <div class="logo">
     <h2>📚 Tradutor Universal</h2>
-    <small>PDF • Ollama • AI</small>
+    <small>v1.5 • PDF • Ollama • AI</small>
   </div>
   <nav>
     <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
@@ -982,7 +982,9 @@ function renderDashboard() {
   document.getElementById('etaRemaining').textContent = s.eta_str || '--';
   document.getElementById('etaFinish').textContent = s.finish_time || '--';
   document.getElementById('etaSpeed').textContent = s.sec_per_mb ? `${s.sec_per_mb} s/MB` : '--';
-  document.getElementById('etaTotalTime').textContent = s.total_time_sec ? fmtDur(s.total_time_sec) : '--';
+  // Tempo Total Gasto: inclui livro atual em progresso
+  const totalElapsed = s.total_elapsed_sec || s.pipeline_elapsed_sec || s.total_time_sec;
+  document.getElementById('etaTotalTime').textContent = totalElapsed ? fmtDur(totalElapsed) : '--';
 
   // Current book
   const cur = st.current_book;

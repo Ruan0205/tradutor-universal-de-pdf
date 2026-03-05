@@ -25,7 +25,7 @@ cls
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
 echo ║                                                               ║
-echo ║        📦 INSTALADOR AUTOMÁTICO DE DEPENDÊNCIAS 📦            ║
+echo ║        📦 INSTALADOR AUTOMÁTICO v1.5 📦                      ║
 echo ║                                                               ║
 echo ║        Tradutor Universal de PDF - Sistema de IA             ║
 echo ║                                                               ║

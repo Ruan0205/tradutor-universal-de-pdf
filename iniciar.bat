@@ -7,7 +7,7 @@ cls
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
 echo ║                                                               ║
-echo ║          📚 TRADUTOR UNIVERSAL DE PDF 📚                      ║
+echo ║          📚 TRADUTOR UNIVERSAL DE PDF v1.5 📚                  ║
 echo ║                                                               ║
 echo ║        Tradução Automática com IA - Ollama                   ║
 echo ║                                                               ║
