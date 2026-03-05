@@ -5,6 +5,7 @@ Gerencia o pipeline de tradução, validação, modelos Ollama, e serve o dashbo
 """
 
 import io
+import cgi
 import json
 import logging
 import mimetypes
@@ -635,6 +636,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
+        if path == "/api/upload-pdfs":
+            return self._handle_upload_pdfs()
+
         body = self._read_body()
 
         if path == "/api/start":
@@ -780,6 +784,79 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Disposition", f'inline; filename="{path.name}"')
         self.end_headers()
         self.wfile.write(data)
+
+    def _handle_upload_pdfs(self):
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type.lower():
+            return self._error(400, "Expected multipart/form-data")
+
+        try:
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": content_type,
+                },
+                keep_blank_values=True,
+            )
+        except Exception as e:
+            return self._error(400, f"Invalid multipart data: {e}")
+
+        if "files" not in form:
+            return self._error(400, "Missing 'files'")
+
+        file_fields = form["files"]
+        if not isinstance(file_fields, list):
+            file_fields = [file_fields]
+
+        added = []
+        overwritten = []
+        skipped = []
+        errors = []
+
+        for item in file_fields:
+            if not getattr(item, "filename", None):
+                skipped.append("<sem-nome>")
+                errors.append("Arquivo sem nome foi ignorado.")
+                continue
+
+            safe_name = Path(item.filename).name.strip()
+            if not safe_name:
+                skipped.append("<sem-nome>")
+                errors.append("Arquivo sem nome foi ignorado.")
+                continue
+
+            if Path(safe_name).suffix.lower() != ".pdf":
+                skipped.append(safe_name)
+                errors.append(f"Arquivo ignorado (não é PDF): {safe_name}")
+                continue
+
+            if not getattr(item, "file", None):
+                skipped.append(safe_name)
+                errors.append(f"Arquivo inválido: {safe_name}")
+                continue
+
+            dest = INPUT_DIR / safe_name
+            already_exists = dest.exists()
+
+            try:
+                with open(dest, "wb") as out:
+                    shutil.copyfileobj(item.file, out)
+                if already_exists:
+                    overwritten.append(safe_name)
+                else:
+                    added.append(safe_name)
+            except Exception as e:
+                errors.append(f"Erro ao salvar '{safe_name}': {e}")
+
+        return self._json({
+            "ok": True,
+            "added": added,
+            "overwritten": overwritten,
+            "skipped": skipped,
+            "errors": errors,
+        })
 
     def _read_body(self) -> Optional[dict]:
         length = int(self.headers.get("Content-Length", 0))

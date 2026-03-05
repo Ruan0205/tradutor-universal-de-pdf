@@ -227,7 +227,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
 <div class="sidebar">
   <div class="logo">
     <h2>📚 Tradutor Universal</h2>
-    <small>v1.6 • PDF • Ollama • AI</small>
+    <small>v1.7 • PDF • Ollama • AI</small>
   </div>
   <nav>
     <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
@@ -618,12 +618,13 @@ button { cursor:pointer; font-family:inherit; border:none; }
   <div class="modal">
     <h3>➕ Adicionar PDFs à Fila</h3>
     <div class="form-group">
-      <label>Caminho dos Arquivos PDF (um por linha)</label>
-      <textarea id="addPdfPaths" rows="6" style="width:100%;padding:8px;background:var(--bg3);border:1px solid var(--bg4);border-radius:6px;color:var(--text);font-size:13px;resize:vertical;" placeholder="E:\meus-pdfs\livro1.pdf&#10;E:\meus-pdfs\livro2.pdf"></textarea>
+      <label>Selecione os Arquivos PDF</label>
+      <input id="addPdfFiles" type="file" accept=".pdf,application/pdf" multiple>
+      <small style="display:block;color:var(--text2);margin-top:6px;">Você pode selecionar um ou mais PDFs de uma vez.</small>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('addPdfModal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="addPdfs()">Adicionar</button>
+      <button class="btn btn-primary" onclick="uploadPdfs()">Adicionar</button>
     </div>
   </div>
 </div>
@@ -703,16 +704,53 @@ async function apiRevalidate(filename) {
   refresh();
 }
 
-function openAddPdfModal() { document.getElementById('addPdfModal').classList.add('show'); }
+function openAddPdfModal() {
+  const fileInput = document.getElementById('addPdfFiles');
+  if (fileInput) fileInput.value = '';
+  document.getElementById('addPdfModal').classList.add('show');
+}
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
-async function addPdfs() {
-  const paths = document.getElementById('addPdfPaths').value.split('\n').map(s => s.trim()).filter(s => s);
-  if (!paths.length) return;
-  const r = await api('POST', '/api/add-pdfs', { files: paths });
-  toast(r.ok ? `${r.added.length} PDFs adicionados!` : r.error, !r.ok);
-  closeModal('addPdfModal');
-  refresh();
+async function uploadPdfs() {
+  const fileInput = document.getElementById('addPdfFiles');
+  const files = fileInput?.files ? Array.from(fileInput.files) : [];
+  if (!files.length) {
+    toast('Selecione pelo menos um PDF.', true);
+    return;
+  }
+
+  const formData = new FormData();
+  files.forEach(file => formData.append('files', file, file.name));
+
+  try {
+    const response = await fetch('/api/upload-pdfs', { method: 'POST', body: formData });
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+      toast(result.error || 'Erro ao enviar PDFs.', true);
+      return;
+    }
+
+    const addedCount = Array.isArray(result.added) ? result.added.length : 0;
+    const overwrittenCount = Array.isArray(result.overwritten) ? result.overwritten.length : 0;
+    const skippedCount = Array.isArray(result.skipped) ? result.skipped.length : 0;
+
+    let message = `${addedCount} PDF(s) adicionado(s)!`;
+    if (overwrittenCount) message += ` ${overwrittenCount} sobrescrito(s).`;
+    if (skippedCount) message += ` ${skippedCount} ignorado(s).`;
+    toast(message, false);
+
+    if (Array.isArray(result.errors) && result.errors.length) {
+      toast(result.errors.join(' | '), true);
+    }
+
+    fileInput.value = '';
+    closeModal('addPdfModal');
+    refresh();
+  } catch (e) {
+    console.error('Upload error:', e);
+    toast('Falha no upload de PDFs.', true);
+  }
 }
 
 async function saveSettings() {

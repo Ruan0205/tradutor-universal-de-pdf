@@ -12,11 +12,11 @@ for %%A in (%*) do (
 set "SELF=%~f0"
 call :set_paths
 
-title Instalador - Tradutor Universal de PDF v1.6
+title Instalador - Tradutor Universal de PDF v1.7
 
 echo.
 echo ================================================================
-echo   INSTALADOR AUTOMATICO v1.6
+echo   INSTALADOR AUTOMATICO v1.7
 echo   Tradutor Universal de PDF
 echo ================================================================
 echo.
@@ -299,7 +299,7 @@ exit /b 0
 :success
 echo.
 echo ================================================================
-echo   INSTALACAO CONCLUIDA COM SUCESSO (v1.6)
+echo   INSTALACAO CONCLUIDA COM SUCESSO (v1.7)
 echo ================================================================
 echo 1. Execute iniciar.bat
 echo 2. Abra o dashboard no navegador
