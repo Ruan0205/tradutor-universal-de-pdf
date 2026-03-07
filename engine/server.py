@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, urlparse, unquote
+from urllib.parse import parse_qs, urlparse, unquote, quote
 
 # =====================================================================
 # PATHS
@@ -122,10 +122,13 @@ def load_config() -> dict:
         "image_ai_selectable_only": True,
         "image_inpaint_radius": 3,
         "font_pack_dir": "assets/fonts",
+        "live_preview_enabled": True,
         "source_lang": "English",
         "target_lang": "Portugu\u00eas Brasileiro",
         "sort_order": "smallest_first",
         "custom_order": [],
+        "max_batch_chars": 2200,
+        "ollama_timeout_sec": 300,
         "ollama_options": {
             "temperature": 0.4,
             "top_p": 0.9,
@@ -435,6 +438,40 @@ def get_books_data() -> dict:
     }
 
 
+def get_in_progress_preview_info(state: dict) -> dict:
+    preview_name = (state or {}).get("preview_pdf")
+    if preview_name:
+        try:
+            target = (TRANSLATING_DIR / preview_name).resolve()
+            if str(target).startswith(str(TRANSLATING_DIR.resolve())) and target.exists():
+                return {
+                    "available": True,
+                    "filename": target.name,
+                    "url": f"/pdf/in-progress/{quote(target.name)}",
+                }
+        except Exception:
+            pass
+
+    # Fallback: latest partial translated file in translating dir.
+    try:
+        candidates = sorted(
+            TRANSLATING_DIR.glob("*_PT.pdf"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            latest = candidates[0]
+            return {
+                "available": True,
+                "filename": latest.name,
+                "url": f"/pdf/in-progress/{quote(latest.name)}",
+            }
+    except Exception:
+        pass
+
+    return {"available": False, "filename": "", "url": ""}
+
+
 def get_full_status() -> dict:
     """Combine all status into one payload for the dashboard."""
     state = read_state()
@@ -442,6 +479,7 @@ def get_full_status() -> dict:
     cfg = load_config()
     books = get_books_data()
     ollama = get_ollama_status()
+    preview = get_in_progress_preview_info(state)
 
     # Determine effective status
     pipeline_alive = is_process_alive(_pipeline_process)
@@ -545,6 +583,7 @@ def get_full_status() -> dict:
         "control": ctrl,
         "config": cfg,
         "books": books,
+        "preview": preview,
         "ollama": ollama,
         "stats": {
             "completed": completed,
@@ -642,6 +681,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             fname = unquote(path[len("/pdf/original/"):])
             target = (ENGLISH_DIR / fname).resolve()
             if not str(target).startswith(str(ENGLISH_DIR.resolve())):
+                return self._error(403, "Forbidden")
+            return self._serve_pdf(target)
+        if path == "/pdf/in-progress":
+            preview = get_in_progress_preview_info(read_state())
+            if not preview.get("available"):
+                return self._error(404, "No in-progress PDF")
+            target = (TRANSLATING_DIR / preview.get("filename", "")).resolve()
+            if not str(target).startswith(str(TRANSLATING_DIR.resolve())):
+                return self._error(403, "Forbidden")
+            return self._serve_pdf(target)
+        if path.startswith("/pdf/in-progress/"):
+            fname = unquote(path[len("/pdf/in-progress/"):])
+            target = (TRANSLATING_DIR / fname).resolve()
+            if not str(target).startswith(str(TRANSLATING_DIR.resolve())):
                 return self._error(403, "Forbidden")
             return self._serve_pdf(target)
 

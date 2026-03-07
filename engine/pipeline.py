@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
     "min_font_ratio": 0.65,
     "min_translatable_chars": 3,
     "max_batch_size": 10,
+    "ollama_timeout_sec": 300,
     "source_lang": "English",
     "target_lang": "Português Brasileiro",
     "sort_order": "smallest_first",
@@ -308,9 +309,9 @@ class TranslationEngine:
                 indices_to_translate.append(i)
         if not indices_to_translate:
             return results
-        max_batch = CFG["max_batch_size"]
-        for batch_start in range(0, len(indices_to_translate), max_batch):
-            batch_indices = indices_to_translate[batch_start:batch_start + max_batch]
+        max_batch = max(1, int(CFG.get("max_batch_size", 10)))
+        max_batch_chars = max(400, int(CFG.get("max_batch_chars", 2200)))
+        for batch_indices in self._chunk_indices_by_chars(indices_to_translate, texts, max_batch, max_batch_chars):
             batch_texts = [texts[i].strip() for i in batch_indices]
             translated_batch = self._translate_batch_call(batch_texts)
             for j, idx in enumerate(batch_indices):
@@ -321,11 +322,43 @@ class TranslationEngine:
                     results[idx] = self.translate(texts[idx])
         return results
 
+    @staticmethod
+    def _chunk_indices_by_chars(indices: List[int], texts: List[str], max_items: int, max_chars: int) -> List[List[int]]:
+        chunks: List[List[int]] = []
+        current: List[int] = []
+        cur_chars = 0
+        for idx in indices:
+            t = (texts[idx] or "").strip()
+            t_chars = max(1, len(t))
+            hit_item_limit = len(current) >= max_items
+            hit_char_limit = current and (cur_chars + t_chars > max_chars)
+            if hit_item_limit or hit_char_limit:
+                chunks.append(current)
+                current = []
+                cur_chars = 0
+            current.append(idx)
+            cur_chars += t_chars
+        if current:
+            chunks.append(current)
+        return chunks
+
     def _translate_batch_call(self, texts: List[str]) -> List[str]:
         tgt = CFG.get("target_lang", "Português Brasileiro")
         segments = [f"[{i}] {t}" for i, t in enumerate(texts, 1)]
         prompt = f"Translate each numbered segment to {tgt}:\n\n" + "\n".join(segments)
-        response = self._call_api(make_batch_prompt(), prompt)
+        try:
+            response = self._call_api(make_batch_prompt(), prompt)
+        except Exception as e:
+            if len(texts) > 1:
+                mid = len(texts) // 2
+                log.warning(
+                    "Batch grande falhou (%d itens): %s. Dividindo em lotes menores.",
+                    len(texts),
+                    e,
+                )
+                return self._translate_batch_call(texts[:mid]) + self._translate_batch_call(texts[mid:])
+            log.warning("Falha em tradução individual de lote: %s", e)
+            return [self._call_ollama(texts[0])]
         parsed = self._parse_batch_response(response, len(texts))
         if parsed is not None:
             return parsed
@@ -368,7 +401,10 @@ class TranslationEngine:
             f"Keep game-specific proper nouns in {src}. "
             f"Return ONLY the translated title:\n{title}"
         )
-        return self._call_api(make_system_prompt(), prompt_text).strip().strip('"').strip("'")
+        try:
+            return self._call_api(make_system_prompt(), prompt_text).strip().strip('"').strip("'")
+        except Exception:
+            return title
 
     @staticmethod
     def _should_translate(text: str) -> bool:
@@ -384,9 +420,15 @@ class TranslationEngine:
     def _call_ollama(self, text: str) -> str:
         tgt = CFG.get("target_lang", "Português Brasileiro")
         user_message = f"Translate to {tgt}:\n{text}"
-        return self._call_api(make_system_prompt(), user_message)
+        try:
+            return self._call_api(make_system_prompt(), user_message)
+        except Exception as e:
+            log.error("Falha em traducao individual; mantendo texto original: %s", e)
+            return text
 
     def _call_api(self, system_msg: str, user_msg: str, retries: int = 3) -> str:
+        timeout_sec = int(CFG.get("ollama_timeout_sec", 300))
+        timeout_sec = max(60, min(timeout_sec, 1800))
         payload = json.dumps({
             "model": self.model,
             "messages": [
@@ -403,7 +445,7 @@ class TranslationEngine:
                     data=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                r = urllib.request.urlopen(req, timeout=180)
+                r = urllib.request.urlopen(req, timeout=timeout_sec)
                 result = json.loads(r.read())
                 response = result.get("message", {}).get("content", "").strip()
                 return self._clean_response(response)
@@ -413,7 +455,7 @@ class TranslationEngine:
                     time.sleep(2 ** attempt)
                 else:
                     log.error("API falhou após %d tentativas: %s", retries, e)
-                    return user_msg.split("\n", 1)[-1]
+                    raise RuntimeError(f"Ollama API falhou: {e}") from e
 
     @staticmethod
     def _clean_response(text: str) -> str:
@@ -620,6 +662,7 @@ class PDFTranslator:
         log.info("Abrindo PDF: %s", input_path.name)
         doc = fitz.open(str(input_path))
         total = doc.page_count
+        live_preview_enabled = bool(CFG.get("live_preview_enabled", True))
 
         for page_idx in range(total):
             # Verificar controle externo a cada página
@@ -642,11 +685,27 @@ class PDFTranslator:
 
             if progress_callback:
                 progress_callback(page_idx + 1, total)
+            if live_preview_enabled:
+                self._save_live_preview(doc, output_path)
 
         doc.save(str(output_path), garbage=4, deflate=True)
         doc.close()
         log.info("PDF traduzido salvo: %s", output_path.name)
         return "completed"
+
+    @staticmethod
+    def _save_live_preview(doc: fitz.Document, output_path: Path):
+        tmp_path = output_path.with_suffix(".preview.tmp.pdf")
+        try:
+            doc.save(str(tmp_path), garbage=1, deflate=True)
+            os.replace(str(tmp_path), str(output_path))
+        except Exception as e:
+            log.warning("Falha ao salvar preview parcial: %s", e)
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
     def _translate_text_page(self, page: fitz.Page):
         try:
@@ -665,9 +724,27 @@ class PDFTranslator:
             line_texts = self._extract_line_texts(lines)
             table_like = self._is_table_like_block(line_texts)
             if table_like:
-                block_text = "\n".join(line_texts).strip()
-            else:
-                block_text = self._extract_block_text(lines).strip()
+                # Preserve table layout better: translate line-by-line inside table-like blocks.
+                for line in lines:
+                    line_text = "".join(s.get("text", "") for s in line.get("spans", []))
+                    line_text = re.sub(r"\s+", " ", line_text).strip()
+                    if not line_text:
+                        continue
+                    line_bbox = line.get("bbox") or block.get("bbox")
+                    line_rect = fitz.Rect(line_bbox)
+                    if line_rect.is_empty or line_rect.is_infinite:
+                        continue
+                    if line_rect.width < 5 or line_rect.height < 3:
+                        continue
+                    style = self._get_dominant_style([line])
+                    style["line_count"] = 1
+                    style["line_lengths"] = [max(1, len(line_text))]
+                    style["line_height_ratio"] = self._estimate_line_height_ratio([line], style["size"], line_rect, 1)
+                    style["over_image"] = self._rect_overlaps_any(line_rect, image_rects)
+                    style["is_table_like"] = True
+                    block_infos.append((line_rect, line_text, style))
+                continue
+            block_text = self._extract_block_text(lines).strip()
             if not block_text:
                 continue
             block_rect = fitz.Rect(block["bbox"])
@@ -1358,13 +1435,13 @@ class TranslationPipeline:
 
         if retranslate_file:
             result = self._retranslate_single(retranslate_file)
-            update_state(status="idle")
+            update_state(status="idle", preview_pdf=None)
             return result
 
         pdfs = self._get_sorted_pdfs()
         if not pdfs:
             log.info("Nenhum PDF encontrado em %s", INPUT_DIR)
-            update_state(status="idle", total_books=0)
+            update_state(status="idle", total_books=0, preview_pdf=None)
             return
 
         update_state(
@@ -1372,6 +1449,7 @@ class TranslationPipeline:
             total_books=len(pdfs),
             pipeline_start=datetime.now().isoformat(),
             model=self.translator.model,
+            preview_pdf=None,
         )
 
         log.info("=" * 60)
@@ -1389,7 +1467,7 @@ class TranslationPipeline:
             ctrl = check_control(self.translator)
             if ctrl == "stop":
                 log.info("Pipeline parado pelo usuário.")
-                update_state(status="idle")
+                update_state(status="idle", preview_pdf=None)
                 return
 
             # Handle dynamic file removal
@@ -1417,7 +1495,7 @@ class TranslationPipeline:
             try:
                 result = self._process_single_book(pdf_path)
                 if result == "stopped":
-                    update_state(status="idle")
+                    update_state(status="idle", preview_pdf=None)
                     return
                 completed.append(pdf_path.name)
                 update_state(completed_books=completed, book_just_completed=pdf_path.name)
@@ -1425,7 +1503,7 @@ class TranslationPipeline:
                 log.error("ERRO '%s':\n%s", pdf_path.name, traceback.format_exc())
                 self._recover_translating_dir()
 
-        update_state(status="idle")
+        update_state(status="idle", preview_pdf=None)
         log.info("\n" + "=" * 60)
         log.info("PIPELINE CONCLUÍDO")
         log.info("=" * 60)
@@ -1437,7 +1515,7 @@ class TranslationPipeline:
         if not orig.exists():
             # Talvez o arquivo esteja em traduzidos com nome PT
             log.error("Arquivo original não encontrado: %s", filename)
-            update_state(status="idle")
+            update_state(status="idle", preview_pdf=None)
             return
         # Mover de volta para input
         dest = INPUT_DIR / filename
@@ -1450,6 +1528,7 @@ class TranslationPipeline:
             total_books=1,
             current_book={"filename": filename, "size_mb": round(orig.stat().st_size / 1048576, 2),
                           "start_time": datetime.now().isoformat()},
+            preview_pdf=None,
         )
 
         try:
@@ -1457,7 +1536,7 @@ class TranslationPipeline:
         except Exception:
             log.error("ERRO retraduzindo '%s':\n%s", filename, traceback.format_exc())
 
-        update_state(status="idle")
+        update_state(status="idle", preview_pdf=None)
 
     def _get_sorted_pdfs(self):
         pt_indicators = [
@@ -1511,9 +1590,8 @@ class TranslationPipeline:
             doc_check.close()
         except Exception:
             total_pages = 0
-        update_state(total_pages=total_pages, current_page=0)
-
         translated_temp = TRANSLATING_DIR / f"{pdf_path.stem}_PT.pdf"
+        update_state(total_pages=total_pages, current_page=0, preview_pdf=translated_temp.name)
 
         def on_progress(current, total):
             update_state(current_page=current, total_pages=total)
@@ -1525,6 +1603,7 @@ class TranslationPipeline:
             dest = INPUT_DIR / pdf_path.name
             if not dest.exists():
                 shutil.move(str(working_path), str(dest))
+            update_state(preview_pdf=None)
             self._cleanup_translating_dir()
             return "stopped"
 
@@ -1537,6 +1616,7 @@ class TranslationPipeline:
         english_path = ENGLISH_DIR / pdf_path.name
         shutil.move(str(working_path), str(english_path))
         log.info("  -> Original -> na-lingua-anterior/")
+        update_state(preview_pdf=None)
         self._cleanup_translating_dir()
         # Remove from retranslate queue if present
         rq = CFG.get("retranslate_queue", [])

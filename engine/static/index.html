@@ -1089,6 +1089,7 @@ function renderDashboard() {
 
   // Current book
   const cur = st.current_book;
+  const preview = DATA.preview || {};
   const area = document.getElementById('currentBookArea');
   if (cur && (isRunning || isPaused)) {
     const curPage = st.current_page || 0;
@@ -1096,6 +1097,12 @@ function renderDashboard() {
     const curPctBook = totalPages > 0 ? Math.round(curPage / totalPages * 100) : 0;
     const elapsed = s.current_elapsed_sec;
     const elStr = Number.isFinite(elapsed) ? fmtDur(elapsed) : '--';
+    const previewHtml = preview.available ? `
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <a class="btn btn-sm btn-secondary" href="${preview.url}" target="_blank" rel="noopener">
+            📄 Abrir PDF parcial (${curPage}/${totalPages})
+          </a>
+        </div>` : '';
     area.innerHTML = `
       <div class="current-book">
         <div class="name">📖 ${cur.filename || '--'}</div>
@@ -1109,6 +1116,7 @@ function renderDashboard() {
         <div class="progress-track" style="height:22px;">
           <div class="progress-fill blue" style="width:${Math.max(curPctBook,2)}%;font-size:11px;">${curPctBook}%</div>
         </div>
+        ${previewHtml}
       </div>`;
   } else {
     area.innerHTML = `<div style="text-align:center;color:var(--text3);padding:20px;">
