@@ -16,6 +16,7 @@ import sys
 import time
 import traceback
 import urllib.request
+import ctypes
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -50,7 +51,9 @@ DEFAULT_CONFIG = {
     "min_font_ratio": 0.65,
     "min_translatable_chars": 3,
     "max_batch_size": 10,
+    "max_batch_chars": 2200,
     "ollama_timeout_sec": 300,
+    "resource_profile": "auto_max",
     "source_lang": "English",
     "target_lang": "Português Brasileiro",
     "sort_order": "smallest_first",
@@ -132,6 +135,78 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("pipeline")
+
+# =====================================================================
+# HARDWARE / OLLAMA OPTIONS
+# =====================================================================
+
+class _MemoryStatusEx(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def get_total_ram_gb() -> float:
+    if os.name == "nt":
+        try:
+            stat = _MemoryStatusEx()
+            stat.dwLength = ctypes.sizeof(_MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullTotalPhys / (1024 ** 3)
+        except Exception:
+            pass
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return (pages * page_size) / (1024 ** 3)
+    except Exception:
+        return 8.0
+
+
+def get_effective_ollama_options() -> dict:
+    opts = dict(CFG.get("ollama_options", {}) or {})
+    profile = str(CFG.get("resource_profile", "auto_max")).strip().lower()
+    if profile not in {"auto", "auto_max", "max"}:
+        return opts
+
+    cpu_threads = max(1, os.cpu_count() or 4)
+    ram_gb = get_total_ram_gb()
+
+    if int(opts.get("num_thread") or 0) <= 0:
+        opts["num_thread"] = cpu_threads
+
+    if int(opts.get("num_batch") or 0) <= 0:
+        if ram_gb >= 48:
+            opts["num_batch"] = 2048
+        elif ram_gb >= 32:
+            opts["num_batch"] = 1024
+        elif ram_gb >= 16:
+            opts["num_batch"] = 512
+        else:
+            opts["num_batch"] = 256
+
+    current_ctx = int(opts.get("num_ctx") or 0)
+    if current_ctx <= 0:
+        current_ctx = int(DEFAULT_CONFIG["ollama_options"]["num_ctx"])
+    target_ctx = current_ctx
+    if ram_gb >= 48:
+        target_ctx = max(target_ctx, 32768)
+    elif ram_gb >= 24:
+        target_ctx = max(target_ctx, 16384)
+    opts["num_ctx"] = target_ctx
+
+    opts.setdefault("temperature", 0.4)
+    opts.setdefault("top_p", 0.9)
+    return opts
+
 
 # =====================================================================
 # CONTROLE EXTERNO (pause/stop/resume/model switch)
@@ -232,9 +307,13 @@ def make_system_prompt():
         f"natural {tgt}.\n"
         "4. Preserve any numbering, bullet points, or structural formatting "
         "present in the source text.\n"
-        "5. If the source text is a single word or very short label that is a "
+        "5. Keep ALL content from the source. Never omit, summarize, or drop any "
+        "sentence, clause, label, or list item.\n"
+        "6. Prefer concise phrasing only when needed to fit the original layout, "
+        "but preserve the full meaning and all information.\n"
+        "7. If the source text is a single word or very short label that is a "
         "game term, return it unchanged.\n"
-        "6. Never add quotation marks, asterisks, or any wrapper around the "
+        "8. Never add quotation marks, asterisks, or any wrapper around the "
         "translation that was not in the original."
     )
 
@@ -251,9 +330,12 @@ def make_batch_prompt():
         f"3. Keep game terms in {src}: feat/spell/class/skill/item names, "
         "ability scores, abbreviations (HP, AC, DC, CR, XP, HD, BAB, etc.).\n"
         f"4. Translate descriptive text to fluent {tgt}.\n"
-        "5. Do NOT add explanations, alternatives, or markdown.\n"
-        "6. If a segment is a game term or very short label, return it unchanged.\n"
-        "7. Preserve the exact count of segments: same number in, same number out."
+        "5. Keep ALL content from every segment. Never omit or summarize.\n"
+        "6. Prefer concise phrasing only when needed to fit the original layout, "
+        "but preserve the full meaning.\n"
+        "7. Do NOT add explanations, alternatives, or markdown.\n"
+        "8. If a segment is a game term or very short label, return it unchanged.\n"
+        "9. Preserve the exact count of segments: same number in, same number out."
     )
 
 
@@ -316,8 +398,14 @@ class TranslationEngine:
             translated_batch = self._translate_batch_call(batch_texts)
             for j, idx in enumerate(batch_indices):
                 if j < len(translated_batch):
-                    results[idx] = translated_batch[j]
-                    self.cache[texts[idx].strip()] = translated_batch[j]
+                    candidate = translated_batch[j]
+                    source = texts[idx].strip()
+                    if self._translation_suspiciously_unchanged(source, candidate):
+                        retry = self._call_ollama(source)
+                        if retry:
+                            candidate = retry
+                    results[idx] = candidate
+                    self.cache[source] = candidate
                 else:
                     results[idx] = self.translate(texts[idx])
         return results
@@ -409,11 +497,14 @@ class TranslationEngine:
     @staticmethod
     def _should_translate(text: str) -> bool:
         stripped = text.strip()
-        if len(stripped) < CFG["min_translatable_chars"]:
+        if not stripped:
             return False
         if re.fullmatch(r"[\d\s\-\u2013\u2014.,:;!?()\[\]{}/|@#$%^&*+=<>~`'\"]+", stripped):
             return False
-        if re.fullmatch(r"[A-Z][A-Z0-9\-_]+", stripped):
+        letters = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]", stripped)
+        if not letters:
+            return False
+        if len(letters) == 1 and len(stripped) < CFG["min_translatable_chars"]:
             return False
         return True
 
@@ -421,14 +512,38 @@ class TranslationEngine:
         tgt = CFG.get("target_lang", "Português Brasileiro")
         user_message = f"Translate to {tgt}:\n{text}"
         try:
-            return self._call_api(make_system_prompt(), user_message)
+            translated = self._call_api(make_system_prompt(), user_message)
+            if self._translation_suspiciously_unchanged(text, translated):
+                src = CFG.get("source_lang", "English")
+                force_message = (
+                    f"Translate this text fully to {tgt}. Keep all information. "
+                    f"Do not leave the answer in {src} unless the original term is a proper noun, "
+                    f"an acronym, or an RPG mechanic that must remain unchanged:\n{text}"
+                )
+                translated = self._call_api(make_system_prompt(), force_message)
+            return translated
         except Exception as e:
             log.error("Falha em traducao individual; mantendo texto original: %s", e)
             return text
 
+    @staticmethod
+    def _translation_suspiciously_unchanged(source: str, translated: str) -> bool:
+        src = re.sub(r"\s+", " ", (source or "").strip())
+        dst = re.sub(r"\s+", " ", (translated or "").strip())
+        if not src or not dst:
+            return False
+        if src != dst:
+            return False
+        if len(src) < 18:
+            return False
+        if len(src.split()) < 3:
+            return False
+        return True
+
     def _call_api(self, system_msg: str, user_msg: str, retries: int = 3) -> str:
         timeout_sec = int(CFG.get("ollama_timeout_sec", 300))
         timeout_sec = max(60, min(timeout_sec, 1800))
+        options = get_effective_ollama_options()
         payload = json.dumps({
             "model": self.model,
             "messages": [
@@ -436,7 +551,7 @@ class TranslationEngine:
                 {"role": "user", "content": user_msg},
             ],
             "stream": False,
-            "options": CFG.get("ollama_options", {"temperature": 0.4, "top_p": 0.9, "num_ctx": 8192}),
+            "options": options,
         }).encode("utf-8")
         for attempt in range(retries):
             try:
@@ -1116,6 +1231,57 @@ class PDFTranslator:
         compact = [ln for ln in lines if ln.strip()]
         return "\n".join(compact) if compact else text.strip()
 
+    def _build_fit_text_variants(self, text: str, style: dict, mode: str) -> List[str]:
+        variants: List[str] = []
+        base = (text or "").strip()
+        if not base:
+            return [text]
+
+        def add(candidate: str):
+            candidate = candidate.strip()
+            if candidate and candidate not in variants:
+                variants.append(candidate)
+
+        add(base)
+        compact = re.sub(r"\s+", " ", base).replace(" ,", ",").replace(" .", ".").strip()
+        add(compact)
+
+        if style.get("is_table_like"):
+            return variants
+
+        line_count = max(1, int(style.get("line_count", 1)))
+        line_lengths = list(style.get("line_lengths") or [max(1, len(compact))])
+        avg_budget = max(8, int(sum(line_lengths) / max(1, len(line_lengths))))
+
+        if mode in {"hybrid", "char_count"}:
+            for extra_lines in (0, 1, 2):
+                target_lines = line_count + extra_lines
+                budgets = list(line_lengths)
+                while len(budgets) < target_lines:
+                    budgets.append(avg_budget)
+                add(self._rewrap_text_with_budgets(
+                    text=compact,
+                    line_count=target_lines,
+                    line_budgets=budgets,
+                    expansion=1.02 if mode == "char_count" else 1.10,
+                    keep_exact_lines=(mode == "hybrid"),
+                ))
+
+        return variants
+
+    @staticmethod
+    def _lineheight_candidates(style: dict, mode: str) -> List[Optional[float]]:
+        if mode != "hybrid":
+            return [None]
+
+        base = float(style.get("line_height_ratio", 1.2) or 1.2)
+        candidates = []
+        for factor in (1.0, 0.96, 0.92, 0.88, 0.84):
+            val = max(0.75, min(1.6, base * factor))
+            if val not in candidates:
+                candidates.append(val)
+        return candidates
+
     def _get_dominant_style(self, lines: list) -> dict:
         styles: Dict[tuple, int] = {}
         for line in lines:
@@ -1151,40 +1317,39 @@ class PDFTranslator:
         elif mode == "hybrid":
             base_ratio = min(base_ratio, 0.58)
         min_size = max(4.0, CFG["min_font_size"], original_size * base_ratio)
-        lineheight = style.get("line_height_ratio", 1.2) if mode == "hybrid" else None
-
-        texts_to_try = [text]
-        if mode == "hybrid":
-            compact = re.sub(r"\s+", " ", text).replace(" ,", ",").replace(" .", ".").strip()
-            if compact and compact != text:
-                texts_to_try.append(compact)
+        hard_min_size = max(2.5, min(min_size, original_size * 0.28))
+        lineheights = self._lineheight_candidates(style, mode)
+        texts_to_try = self._build_fit_text_variants(text, style, mode)
 
         for candidate_text in texts_to_try:
-            current_size = original_size
-            shrink_step = 0.25 if style.get("is_table_like") or mode == "structural" else 0.5
-            while current_size >= min_size:
-                kwargs = {
-                    "fontname": font_name,
-                    "fontsize": current_size,
-                    "color": color,
-                    "align": fitz.TEXT_ALIGN_LEFT,
-                }
-                if lineheight is not None:
-                    kwargs["lineheight"] = lineheight
-                rc = page.insert_textbox(rect, candidate_text, **kwargs)
-                if rc >= 0:
-                    return
-                current_size -= shrink_step
+            shrink_step = 0.25 if style.get("is_table_like") or mode == "structural" else 0.4
+            for lineheight in lineheights:
+                current_size = original_size
+                while current_size >= hard_min_size:
+                    kwargs = {
+                        "fontname": font_name,
+                        "fontsize": current_size,
+                        "color": color,
+                        "align": fitz.TEXT_ALIGN_LEFT,
+                    }
+                    if lineheight is not None:
+                        kwargs["lineheight"] = lineheight
+                    rc = page.insert_textbox(rect, candidate_text, **kwargs)
+                    if rc >= 0:
+                        return
+                    current_size -= shrink_step
 
+        fallback_text = texts_to_try[-1] if texts_to_try else text
         fallback_kwargs = {
             "fontname": font_name,
-            "fontsize": min_size,
+            "fontsize": hard_min_size,
             "color": color,
             "align": fitz.TEXT_ALIGN_LEFT,
         }
-        if lineheight is not None:
-            fallback_kwargs["lineheight"] = lineheight
-        page.insert_textbox(rect, texts_to_try[-1], **fallback_kwargs)
+        tight_lineheight = lineheights[-1] if lineheights and lineheights[-1] is not None else None
+        if tight_lineheight is not None:
+            fallback_kwargs["lineheight"] = tight_lineheight
+        page.insert_textbox(rect, fallback_text, **fallback_kwargs)
 
     def _draw_fitted_text(self, draw, text, x0, y0, x1, y1, font, base_size,
                           fill_color="black", source_line_count: int = 1, mode: str = "structural",
@@ -1456,6 +1621,7 @@ class TranslationPipeline:
         log.info("PIPELINE DE TRADUÇÃO INICIADO")
         log.info("Total de livros: %d", len(pdfs))
         log.info("Ordem: menor -> maior")
+        log.info("Ollama options efetivos: %s", get_effective_ollama_options())
         log.info("=" * 60)
 
         completed = []

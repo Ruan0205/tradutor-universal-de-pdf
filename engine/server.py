@@ -123,6 +123,7 @@ def load_config() -> dict:
         "image_inpaint_radius": 3,
         "font_pack_dir": "assets/fonts",
         "live_preview_enabled": True,
+        "resource_profile": "auto_max",
         "source_lang": "English",
         "target_lang": "Portugu\u00eas Brasileiro",
         "sort_order": "smallest_first",
