@@ -7,6 +7,7 @@ Escreve estado em tempo real para o dashboard.
 """
 
 import io
+import hashlib
 import json
 import logging
 import os
@@ -769,6 +770,8 @@ class PDFTranslator:
         self._font_pack_cache_key = ""
         self._image_font_paths = []
         self._image_font_choice_cache: Dict[Tuple[int, int, int], Optional[str]] = {}
+        self._pdf_font_choice_cache: Dict[Tuple[str, bool, bool], Optional[str]] = {}
+        self._pdf_font_alias_cache: Dict[str, str] = {}
         self._refresh_image_font_candidates(force=True)
 
     def translate_pdf(self, input_path: Path, output_path: Path,
@@ -1276,7 +1279,7 @@ class PDFTranslator:
 
         base = float(style.get("line_height_ratio", 1.2) or 1.2)
         candidates = []
-        for factor in (1.0, 0.96, 0.92, 0.88, 0.84):
+        for factor in (1.0, 0.96, 0.92, 0.88, 0.84, 0.8, 0.76):
             val = max(0.75, min(1.6, base * factor))
             if val not in candidates:
                 candidates.append(val)
@@ -1304,7 +1307,7 @@ class PDFTranslator:
         }
 
     def _insert_block_text(self, page, rect, text, style, mode: str = "structural"):
-        font_name = get_fallback_font(style["font"], style.get("flags", 0))
+        font_name = self._resolve_pdf_font(page, style)
         original_size = style["size"]
         color = style["color"]
         base_ratio = CFG["min_font_ratio"]
@@ -1317,7 +1320,7 @@ class PDFTranslator:
         elif mode == "hybrid":
             base_ratio = min(base_ratio, 0.58)
         min_size = max(4.0, CFG["min_font_size"], original_size * base_ratio)
-        hard_min_size = max(2.5, min(min_size, original_size * 0.28))
+        hard_min_size = max(2.2, min(min_size, original_size * 0.22))
         lineheights = self._lineheight_candidates(style, mode)
         texts_to_try = self._build_fit_text_variants(text, style, mode)
 
@@ -1350,6 +1353,99 @@ class PDFTranslator:
         if tight_lineheight is not None:
             fallback_kwargs["lineheight"] = tight_lineheight
         page.insert_textbox(rect, fallback_text, **fallback_kwargs)
+
+    @staticmethod
+    def _font_pack_dir() -> Path:
+        font_pack_dir_cfg = Path(str(CFG.get("font_pack_dir", "assets/fonts")))
+        return font_pack_dir_cfg if font_pack_dir_cfg.is_absolute() else (BASE_DIR / font_pack_dir_cfg)
+
+    @staticmethod
+    def _pdf_font_pack_candidates(category: str, is_bold: bool, is_italic: bool) -> List[str]:
+        if category == "mono":
+            if is_bold:
+                return ["NotoSansMono-Bold.ttf", "NotoSansMono-Regular.ttf"]
+            return ["NotoSansMono-Regular.ttf", "NotoSans-Regular.ttf"]
+        if category == "serif":
+            if is_bold:
+                return ["NotoSerif-Bold.ttf", "NotoSerif-Regular.ttf"]
+            return ["NotoSerif-Regular.ttf", "NotoSans-Regular.ttf"]
+        if is_bold and is_italic:
+            return ["NotoSans-Bold.ttf", "NotoSans-Italic.ttf", "NotoSans-Regular.ttf"]
+        if is_bold:
+            return ["NotoSans-Bold.ttf", "NotoSans-Regular.ttf"]
+        if is_italic:
+            return ["NotoSans-Italic.ttf", "NotoSans-Regular.ttf"]
+        return ["NotoSans-Regular.ttf", "NotoSerif-Regular.ttf"]
+
+    @staticmethod
+    def _pdf_windows_font_candidates(category: str, is_bold: bool, is_italic: bool) -> List[str]:
+        if category == "mono":
+            if is_bold and is_italic:
+                return ["consolaz.ttf", "courbi.ttf", "consolab.ttf", "consola.ttf"]
+            if is_bold:
+                return ["consolab.ttf", "courbd.ttf", "consola.ttf"]
+            if is_italic:
+                return ["consolai.ttf", "couri.ttf", "consola.ttf"]
+            return ["consola.ttf", "cour.ttf"]
+        if category == "serif":
+            if is_bold and is_italic:
+                return ["timesbi.ttf", "georgiaz.ttf", "timesbd.ttf", "times.ttf"]
+            if is_bold:
+                return ["timesbd.ttf", "georgiab.ttf", "times.ttf"]
+            if is_italic:
+                return ["timesi.ttf", "georgiai.ttf", "times.ttf"]
+            return ["times.ttf", "georgia.ttf", "cambria.ttc"]
+        if is_bold and is_italic:
+            return ["arialbi.ttf", "calibriz.ttf", "segoeuiz.ttf", "arial.ttf"]
+        if is_bold:
+            return ["arialbd.ttf", "calibrib.ttf", "segoeuib.ttf", "arial.ttf"]
+        if is_italic:
+            return ["ariali.ttf", "calibrii.ttf", "segoeuii.ttf", "arial.ttf"]
+        return ["arial.ttf", "calibri.ttf", "segoeui.ttf"]
+
+    def _choose_pdf_font_path(self, style: dict) -> Optional[str]:
+        category = classify_font(style.get("font", ""))
+        is_bold, is_italic = detect_font_style(style.get("font", ""), style.get("flags", 0))
+        cache_key = (category, is_bold, is_italic)
+        if cache_key in self._pdf_font_choice_cache:
+            return self._pdf_font_choice_cache[cache_key]
+
+        font_pack_dir = self._font_pack_dir()
+        candidates: List[Path] = []
+        if font_pack_dir.exists():
+            for name in self._pdf_font_pack_candidates(category, is_bold, is_italic):
+                candidates.append(font_pack_dir / name)
+
+        win_fonts = Path("C:/Windows/Fonts")
+        for name in self._pdf_windows_font_candidates(category, is_bold, is_italic):
+            candidates.append(win_fonts / name)
+
+        best = None
+        for path in candidates:
+            if path.exists() and path.is_file():
+                best = str(path)
+                break
+
+        self._pdf_font_choice_cache[cache_key] = best
+        return best
+
+    def _resolve_pdf_font(self, page: fitz.Page, style: dict) -> str:
+        font_path = self._choose_pdf_font_path(style)
+        if not font_path:
+            return get_fallback_font(style["font"], style.get("flags", 0))
+
+        cache_key = font_path.lower()
+        alias = self._pdf_font_alias_cache.get(cache_key)
+        if not alias:
+            alias = f"uf{hashlib.md5(cache_key.encode('utf-8')).hexdigest()[:10]}"
+            self._pdf_font_alias_cache[cache_key] = alias
+
+        try:
+            page.insert_font(fontname=alias, fontfile=font_path)
+            return alias
+        except Exception as e:
+            log.warning("Falha ao registrar fonte PDF '%s': %s", font_path, e)
+            return get_fallback_font(style["font"], style.get("flags", 0))
 
     def _draw_fitted_text(self, draw, text, x0, y0, x1, y1, font, base_size,
                           fill_color="black", source_line_count: int = 1, mode: str = "structural",
@@ -1461,6 +1557,7 @@ class PDFTranslator:
         self._font_pack_cache_key = cache_key
         self._image_font_paths = self._build_image_font_candidates()
         self._image_font_choice_cache.clear()
+        self._pdf_font_choice_cache.clear()
 
     def _choose_image_font_path(self, text: str, box_w: float, box_h: float) -> Optional[str]:
         if not self._image_font_paths:

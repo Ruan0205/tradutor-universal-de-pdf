@@ -343,13 +343,25 @@ def get_ollama_status() -> dict:
 def get_books_data() -> dict:
     """Collect all book data from directories and logs."""
 
-    def list_pdfs(directory):
+    def list_pdfs(directory, sort_mode="name_asc"):
         if not directory.exists():
             return []
-        return sorted([
-            {"name": f.name, "size_mb": round(f.stat().st_size / 1048576, 2)}
-            for f in directory.glob("*.pdf")
-        ], key=lambda x: x["name"])
+        items = []
+        for f in directory.glob("*.pdf"):
+            stat = f.stat()
+            items.append({
+                "name": f.name,
+                "size_mb": round(stat.st_size / 1048576, 2),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "_mtime": stat.st_mtime,
+            })
+        if sort_mode == "mtime_desc":
+            items.sort(key=lambda x: (x["_mtime"], x["name"].lower()), reverse=True)
+        else:
+            items.sort(key=lambda x: x["name"].lower())
+        for item in items:
+            item.pop("_mtime", None)
+        return items
 
     # Parse translation log for mappings
     mapping = {}  # translated_name -> original_name
@@ -412,7 +424,7 @@ def get_books_data() -> dict:
 
     # Build combined book list
     translated = []
-    for f in list_pdfs(OUTPUT_DIR):
+    for f in list_pdfs(OUTPUT_DIR, sort_mode="mtime_desc"):
         orig_name = mapping.get(f["name"], "")
         val = validations.get(f["name"], None)
         t = timing.get(orig_name, {})

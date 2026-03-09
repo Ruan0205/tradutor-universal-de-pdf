@@ -227,7 +227,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
 <div class="sidebar">
   <div class="logo">
     <h2>📚 Tradutor Universal</h2>
-    <small>v1.9 • PDF • Ollama • AI</small>
+    <small>v2.0 • PDF • Ollama • AI</small>
   </div>
   <nav>
     <a href="#" data-page="dashboard" class="active"><span class="icon">📊</span><span>Dashboard</span></a>
@@ -1126,7 +1126,7 @@ function renderDashboard() {
   }
 
   // Recent books
-  const translated = (books.translated || []).slice().reverse().slice(0, 10);
+  const translated = (books.translated || []).slice(0, 10);
   if (translated.length) {
     let rows = translated.map(b => {
       const v = b.validation;

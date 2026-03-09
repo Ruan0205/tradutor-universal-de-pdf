@@ -7,7 +7,6 @@ Pode ser usado standalone ou pelo continuous_validator.
 """
 
 import json
-import random
 import re
 import sys
 import time
@@ -255,6 +254,108 @@ def rects_overlap(r1, r2) -> bool:
     return False
 
 
+def overlap_score(r1, r2) -> float:
+    inter = r1 & r2
+    if inter.is_empty:
+        return 0.0
+    area1 = max(1.0, r1.width * r1.height)
+    area2 = max(1.0, r2.width * r2.height)
+    inter_area = inter.width * inter.height
+    return inter_area / min(area1, area2)
+
+
+def find_best_overlap_block(target: dict, candidates: List[dict]) -> Optional[dict]:
+    best = None
+    best_score = 0.0
+    for candidate in candidates:
+        score = overlap_score(target["rect"], candidate["rect"])
+        if score > best_score:
+            best_score = score
+            best = candidate
+    if best_score < 0.12:
+        return None
+    return best
+
+
+def normalize_compare_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).lower()
+
+
+def suspicious_glyph_count(text: str) -> int:
+    if not text:
+        return 0
+    count = 0
+    count += text.count("\ufffd")
+    count += text.count("□")
+    count += sum(len(m.group(0)) for m in re.finditer(r"\?{3,}", text))
+    if len(text) >= 12:
+        q_count = text.count("?")
+        if q_count >= max(3, int(len(text) * 0.1)):
+            count += q_count
+    return count
+
+
+def apply_content_quality_checks(orig_blocks: List[dict], trans_blocks: List[dict], report: dict):
+    if not orig_blocks or not trans_blocks:
+        return
+
+    matched = 0
+    unchanged = 0
+    corrupted = 0
+    extra_question_marks = 0
+    total_suspicious_glyphs = 0
+
+    for ob in orig_blocks:
+        source_text = (ob.get("text") or "").strip()
+        if len(source_text) < 8:
+            continue
+        tb = find_best_overlap_block(ob, trans_blocks)
+        if not tb:
+            continue
+        matched += 1
+        target_text = (tb.get("text") or "").strip()
+        if not target_text:
+            corrupted += 1
+            continue
+
+        src_norm = normalize_compare_text(source_text)
+        dst_norm = normalize_compare_text(target_text)
+        if src_norm == dst_norm and len(src_norm) >= 18 and len(src_norm.split()) >= 3:
+            unchanged += 1
+
+        src_q = source_text.count("?")
+        dst_q = target_text.count("?")
+        extra_question_marks += max(0, dst_q - src_q)
+        glyph_count = suspicious_glyph_count(target_text)
+        total_suspicious_glyphs += glyph_count
+        if glyph_count > 0:
+            corrupted += 1
+
+    report["stats"]["quality_matched_blocks"] = matched
+    report["stats"]["unchanged_blocks"] = unchanged
+    report["stats"]["corrupted_blocks"] = corrupted
+    report["stats"]["extra_question_marks"] = extra_question_marks
+    report["stats"]["suspicious_glyphs"] = total_suspicious_glyphs
+
+    if matched <= 0:
+        return
+
+    unchanged_ratio = unchanged / matched
+    corrupted_ratio = corrupted / matched
+    report["stats"]["unchanged_block_ratio"] = round(unchanged_ratio, 3)
+    report["stats"]["corrupted_block_ratio"] = round(corrupted_ratio, 3)
+
+    if unchanged_ratio > 0.12:
+        report["issues"].append(f"UNCHANGED_BLOCKS_HIGH: {unchanged}/{matched}")
+        report["pass"] = False
+
+    if corrupted_ratio > 0.08 or extra_question_marks >= 8 or total_suspicious_glyphs >= 8:
+        report["issues"].append(
+            f"CORRUPTED_GLYPHS: blocks={corrupted}/{matched} extra_q={extra_question_marks}"
+        )
+        report["pass"] = False
+
+
 # =====================================================================
 # TABLE DETECTION
 # =====================================================================
@@ -351,6 +452,8 @@ def _validate_page_structural(orig_page, trans_page, page_num) -> dict:
         report["issues"].append("EMPTY_PAGE")
         report["pass"] = False
 
+    apply_content_quality_checks(orig_blocks, trans_blocks, report)
+
     if not report["issues"]:
         report["issues"].append("OK")
     return report
@@ -359,6 +462,8 @@ def _validate_page_structural(orig_page, trans_page, page_num) -> dict:
 def _validate_page_char_count(orig_page, trans_page, page_num) -> dict:
     """Validação por contagem de caracteres (total e por linha)."""
     report = {"page": page_num, "issues": [], "stats": {}, "pass": True}
+    orig_blocks = get_text_blocks(orig_page)
+    trans_blocks = get_text_blocks(trans_page)
     orig_lines = get_line_entries(orig_page)
     trans_lines = get_line_entries(trans_page)
 
@@ -395,6 +500,8 @@ def _validate_page_char_count(orig_page, trans_page, page_num) -> dict:
     if len(orig_lines) > 3 and len(trans_lines) == 0:
         report["issues"].append("EMPTY_PAGE")
         report["pass"] = False
+
+    apply_content_quality_checks(orig_blocks, trans_blocks, report)
 
     if not report["issues"]:
         report["issues"].append("OK")
@@ -467,11 +574,7 @@ def _validate_page_hybrid(orig_page, trans_page, page_num) -> dict:
     color_mismatches = 0
     matched_count = 0
     for ob in orig_blocks:
-        best_match = None
-        for tb in trans_blocks:
-            if rects_overlap(ob["rect"], tb["rect"]):
-                best_match = tb
-                break
+        best_match = find_best_overlap_block(ob, trans_blocks)
         if not best_match:
             continue
         matched_count += 1
@@ -578,6 +681,8 @@ def _validate_page_hybrid(orig_page, trans_page, page_num) -> dict:
         report["issues"].append("EMPTY_PAGE")
         report["pass"] = False
 
+    apply_content_quality_checks(orig_blocks, trans_blocks, report)
+
     if not report["issues"]:
         report["issues"].append("OK")
     return report
@@ -602,6 +707,31 @@ def _resolve_page_count(mode, total_pages: int) -> int:
         return min(int(mode_str), total_pages)
     except (ValueError, TypeError):
         return max(1, total_pages // 4)
+
+
+def _select_validation_pages(total_pages: int, num_pages: int) -> List[int]:
+    if total_pages <= 0:
+        return []
+    if num_pages >= total_pages:
+        return list(range(total_pages))
+    if num_pages <= 1:
+        return [max(0, total_pages // 2)]
+
+    step = (total_pages - 1) / (num_pages - 1)
+    pages = []
+    for idx in range(num_pages):
+        page = int(round(idx * step))
+        if page not in pages:
+            pages.append(page)
+
+    if len(pages) < num_pages:
+        for page in range(total_pages):
+            if page not in pages:
+                pages.append(page)
+            if len(pages) >= num_pages:
+                break
+
+    return sorted(pages[:num_pages])
 
 
 def validate_book(orig_path: str, trans_path: str, mode="25%",
@@ -647,10 +777,7 @@ def validate_book(orig_path: str, trans_path: str, mode="25%",
     total = orig_doc.page_count
     num_pages = _resolve_page_count(mode, total)
 
-    if num_pages >= total:
-        pages = list(range(total))
-    else:
-        pages = sorted(random.sample(range(total), num_pages))
+    pages = _select_validation_pages(total, num_pages)
 
     failed_pages = 0
     for page_idx in pages:

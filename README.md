@@ -1,4 +1,4 @@
-# 📚 Tradutor Universal de PDFs — v1.9
+# 📚 Tradutor Universal de PDFs — v2.0
 
 **Traduza livros PDF inteiros automaticamente usando modelos de IA local (Ollama).**
 
@@ -83,7 +83,7 @@
   - **Estrutural** — foca somente na estrutura/layout (blocos, proporções e sobreposição)
   - **Contagem de Caracteres** — foca somente em caracteres (total e por linha)
   - **Híbrido** — análise completa: estrutura, fontes, cores, tabelas, linhas, sobreposição e texto sobre imagem
-- **Modos de cobertura:** 25% aleatório (padrão), 50% aleatório, ou todas as páginas
+- **Modos de cobertura:** 25% distribuído (padrão), 50% distribuído, ou todas as páginas
 - **Tolerância de fidelidade** configurável (0-100%, padrão 90%)
 - Validação contínua — monitora automaticamente novos livros traduzidos
 - Revalidação manual com um clique
@@ -182,7 +182,13 @@ ollama pull translategemma
 
 ---
 
-## 📋 Changelog v1.9
+## 📋 Changelog v2.0
+
+- Escrita de texto no PDF com fontes Unicode embutidas para evitar `?` no lugar de acentos e glifos válidos
+- Validador reforçado com detecção de glifos corrompidos, blocos não traduzidos e amostragem distribuída ao longo do livro
+- Lista de livros traduzidos ordenada do mais recente para o mais antigo
+- Ajuste de encaixe de texto por bloco com redução de fonte mais agressiva para caber no mesmo espaço
+- Continuação das melhorias da v1.9:
 
 - Modo novo em imagens: `ai_rebuild` (inpainting + reconstrução de texto) com `legacy` mantido como padrão
 - Controle de processamento OCR/imagem por configuração (`CPU` ou `GPU`)
@@ -231,7 +237,7 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 
 ---
 
-*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v1.9*
+*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v2.0*
 
 ## 🙏 Créditos e Reconhecimentos
 
