@@ -1,4 +1,4 @@
-# 📚 Tradutor Universal de PDFs — v2.0
+# 📚 Tradutor Universal de PDFs — v2.0.1
 
 **Traduza livros PDF inteiros automaticamente usando modelos de IA local (Ollama).**
 
@@ -182,7 +182,12 @@ ollama pull translategemma
 
 ---
 
-## 📋 Changelog v2.0
+## 📋 Changelog v2.0.1
+
+- Correção da inicialização do dashboard em ambientes com Python 3.13
+- Upload `multipart/form-data` compatível sem depender do módulo removido `cgi`
+- Tratamento de desconexões do cliente no dashboard para evitar tracebacks `WinError 10053/10054`
+- Continuação das melhorias da v2.0:
 
 - Escrita de texto no PDF com fontes Unicode embutidas para evitar `?` no lugar de acentos e glifos válidos
 - Validador reforçado com detecção de glifos corrompidos, blocos não traduzidos e amostragem distribuída ao longo do livro
@@ -237,7 +242,7 @@ Projeto de código aberto. Livre para uso pessoal e educacional.
 
 ---
 
-*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v2.0*
+*Desenvolvido com ❤️ usando IA local — Tradutor Universal de PDFs v2.0.1*
 
 ## 🙏 Créditos e Reconhecimentos
 

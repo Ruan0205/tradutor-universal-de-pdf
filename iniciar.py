@@ -92,7 +92,7 @@ def show_message(title: str, message: str, is_error: bool = False):
 
 def banner():
     cprint("=" * 60, "cyan")
-    cprint("TRADUTOR UNIVERSAL DE PDF v2.0", "bold")
+    cprint("TRADUTOR UNIVERSAL DE PDF v2.0.1", "bold")
     cprint("Traducao automatica com IA local (Ollama)", "cyan")
     cprint("=" * 60, "cyan")
 
@@ -566,7 +566,7 @@ def run_tray(server_proc: subprocess.Popen | None):
     icon = pystray.Icon(
         "tradutor_universal_pdf",
         create_tray_image(),
-        "Tradutor Universal de PDF v2.0",
+        "Tradutor Universal de PDF v2.0.1",
         menu,
     )
 
