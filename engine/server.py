@@ -864,42 +864,57 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     # -- Helpers --
 
+    @staticmethod
+    def _is_client_disconnect(exc: BaseException) -> bool:
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return True
+        return isinstance(exc, OSError) and getattr(exc, "winerror", None) in {10053, 10054}
+
+    def _send_bytes(self, code: int, body: bytes, content_type: str, extra_headers: Optional[dict] = None):
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", len(body))
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+            return True
+        except OSError as exc:
+            if self._is_client_disconnect(exc):
+                return False
+            raise
+
     def _json(self, data):
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", len(body))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        return self._send_bytes(
+            200,
+            body,
+            "application/json; charset=utf-8",
+            {"Access-Control-Allow-Origin": "*"},
+        )
 
     def _error(self, code, msg):
         body = json.dumps({"error": msg}).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(body)
+        return self._send_bytes(code, body, "application/json")
 
     def _serve_file(self, path: Path, mime: str):
         if not path.exists():
             return self._error(404, "File not found")
         data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", f"{mime}; charset=utf-8")
-        self.send_header("Content-Length", len(data))
-        self.end_headers()
-        self.wfile.write(data)
+        return self._send_bytes(200, data, f"{mime}; charset=utf-8")
 
     def _serve_pdf(self, path: Path):
         if not path.exists():
             return self._error(404, "PDF not found")
         data = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/pdf")
-        self.send_header("Content-Length", len(data))
-        self.send_header("Content-Disposition", f'inline; filename="{path.name}"')
-        self.end_headers()
-        self.wfile.write(data)
+        return self._send_bytes(
+            200,
+            data,
+            "application/pdf",
+            {"Content-Disposition": f'inline; filename="{path.name}"'},
+        )
 
     def _handle_upload_pdfs(self):
         content_type = self.headers.get("Content-Type", "")
@@ -1016,11 +1031,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return None
 
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+        self._send_bytes(
+            200,
+            b"",
+            "text/plain; charset=utf-8",
+            {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
 
     def log_message(self, format, *args):
         pass  # Suppress request logs
