@@ -63,6 +63,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("server")
 
+
+def is_client_disconnect_error(exc: BaseException) -> bool:
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+        return True
+    return isinstance(exc, OSError) and getattr(exc, "winerror", None) in {10053, 10054}
+
 # =====================================================================
 # PROCESS MANAGER
 # =====================================================================
@@ -866,9 +872,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_client_disconnect(exc: BaseException) -> bool:
-        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
-            return True
-        return isinstance(exc, OSError) and getattr(exc, "winerror", None) in {10053, 10054}
+        return is_client_disconnect_error(exc)
 
     def _send_bytes(self, code: int, body: bytes, content_type: str, extra_headers: Optional[dict] = None):
         try:
@@ -1046,6 +1050,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass  # Suppress request logs
 
 
+class DashboardHTTPServer(HTTPServer):
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if exc is not None and is_client_disconnect_error(exc):
+            return
+        super().handle_error(request, client_address)
+
+
 def get_server_port() -> int:
     raw = os.environ.get("TUP_PORT", "8050").strip()
     try:
@@ -1072,7 +1084,7 @@ def main():
     write_state({"status": "idle"})
 
     try:
-        server = HTTPServer(("0.0.0.0", port), DashboardHandler)
+        server = DashboardHTTPServer(("0.0.0.0", port), DashboardHandler)
     except OSError as e:
         log.error("Nao foi possivel iniciar o servidor na porta %d: %s", port, e)
         return
