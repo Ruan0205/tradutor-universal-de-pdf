@@ -5,7 +5,6 @@ Gerencia o pipeline de tradução, validação, modelos Ollama, e serve o dashbo
 """
 
 import io
-import cgi
 import json
 import logging
 import mimetypes
@@ -20,6 +19,8 @@ import time
 import traceback
 import urllib.request
 from datetime import datetime, timedelta
+from email.parser import BytesParser
+from email.policy import default as EMAIL_POLICY
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
@@ -625,6 +626,30 @@ def _fmt_duration(seconds):
     return f"{m}m{s:02d}s"
 
 
+def parse_multipart_form_data(content_type: str, body: bytes) -> list[dict]:
+    """Parse multipart/form-data without depending on the removed cgi module."""
+    raw_message = (
+        f"Content-Type: {content_type}\r\n"
+        "MIME-Version: 1.0\r\n\r\n"
+    ).encode("utf-8") + body
+    message = BytesParser(policy=EMAIL_POLICY).parsebytes(raw_message)
+    if not message.is_multipart():
+        raise ValueError("Expected multipart/form-data body")
+
+    parts = []
+    for part in message.walk():
+        if part.is_multipart():
+            continue
+        if part.get_content_disposition() != "form-data":
+            continue
+        parts.append({
+            "name": part.get_param("name", header="content-disposition"),
+            "filename": part.get_filename(),
+            "content": part.get_payload(decode=True) or b"",
+        })
+    return parts
+
+
 def revalidate_book(translated_name: str) -> dict:
     """Trigger revalidation of a single book."""
     cfg = load_config()
@@ -881,25 +906,52 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if "multipart/form-data" not in content_type.lower():
             return self._error(400, "Expected multipart/form-data")
 
+        file_fields = []
         try:
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE": content_type,
-                },
-                keep_blank_values=True,
-            )
-        except Exception as e:
-            return self._error(400, f"Invalid multipart data: {e}")
+            import cgi  # type: ignore
+        except ModuleNotFoundError:
+            cgi = None
 
-        if "files" not in form:
-            return self._error(400, "Missing 'files'")
+        if cgi is not None:
+            try:
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={
+                        "REQUEST_METHOD": "POST",
+                        "CONTENT_TYPE": content_type,
+                    },
+                    keep_blank_values=True,
+                )
+            except Exception as e:
+                return self._error(400, f"Invalid multipart data: {e}")
 
-        file_fields = form["files"]
-        if not isinstance(file_fields, list):
-            file_fields = [file_fields]
+            if "files" not in form:
+                return self._error(400, "Missing 'files'")
+
+            raw_file_fields = form["files"]
+            if not isinstance(raw_file_fields, list):
+                raw_file_fields = [raw_file_fields]
+
+            file_fields = [
+                {
+                    "filename": getattr(item, "filename", None),
+                    "file": getattr(item, "file", None),
+                    "content": None,
+                }
+                for item in raw_file_fields
+            ]
+        else:
+            length = int(self.headers.get("Content-Length", 0))
+            if length <= 0:
+                return self._error(400, "Empty multipart body")
+            try:
+                parsed_fields = parse_multipart_form_data(content_type, self.rfile.read(length))
+            except Exception as e:
+                return self._error(400, f"Invalid multipart data: {e}")
+            file_fields = [field for field in parsed_fields if field.get("name") == "files"]
+            if not file_fields:
+                return self._error(400, "Missing 'files'")
 
         added = []
         overwritten = []
@@ -907,12 +959,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         errors = []
 
         for item in file_fields:
-            if not getattr(item, "filename", None):
+            if not item.get("filename"):
                 skipped.append("<sem-nome>")
                 errors.append("Arquivo sem nome foi ignorado.")
                 continue
 
-            safe_name = Path(item.filename).name.strip()
+            safe_name = Path(item["filename"]).name.strip()
             if not safe_name:
                 skipped.append("<sem-nome>")
                 errors.append("Arquivo sem nome foi ignorado.")
@@ -923,7 +975,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 errors.append(f"Arquivo ignorado (não é PDF): {safe_name}")
                 continue
 
-            if not getattr(item, "file", None):
+            file_obj = item.get("file")
+            file_bytes = item.get("content")
+            if file_obj is None and file_bytes is None:
                 skipped.append(safe_name)
                 errors.append(f"Arquivo inválido: {safe_name}")
                 continue
@@ -933,7 +987,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             try:
                 with open(dest, "wb") as out:
-                    shutil.copyfileobj(item.file, out)
+                    if file_obj is not None:
+                        shutil.copyfileobj(file_obj, out)
+                    else:
+                        out.write(file_bytes or b"")
                 if already_exists:
                     overwritten.append(safe_name)
                 else:

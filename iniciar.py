@@ -30,6 +30,7 @@ PYTHON_EXE = str(VENV_DIR / "Scripts" / "python.exe")
 PIP_EXE = str(VENV_DIR / "Scripts" / "pip.exe")
 SERVER_SCRIPT = str(ENGINE_DIR / "server.py")
 DEPS_DONE_FILE = ENGINE_DIR / ".deps_installed"
+SERVER_STARTUP_LOG = ENGINE_DIR / "server_startup.log"
 
 DASHBOARD_PORT = 8050
 DASHBOARD_URL = f"http://localhost:{DASHBOARD_PORT}/"
@@ -202,13 +203,29 @@ def dashboard_online() -> bool:
         return False
 
 
-def wait_dashboard(timeout_sec: int = 30) -> bool:
+def wait_dashboard(timeout_sec: int = 30, server_proc: subprocess.Popen | None = None) -> bool:
     start = time.time()
     while (time.time() - start) < timeout_sec:
         if dashboard_online():
             return True
+        if server_proc is not None and server_proc.poll() is not None:
+            return False
         time.sleep(0.5)
     return False
+
+
+def read_startup_log_tail(max_lines: int = 12) -> str:
+    if not SERVER_STARTUP_LOG.exists():
+        return ""
+    try:
+        lines = SERVER_STARTUP_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+
+    tail = [line.strip() for line in lines[-max_lines:] if line.strip()]
+    if not tail:
+        return ""
+    return " | ".join(tail[-3:])
 
 
 def check_python() -> bool:
@@ -374,11 +391,11 @@ def check_model() -> bool:
 
 def launch_server(background: bool):
     """
-    Returns: (process_or_none, status)
+    Returns: (process_or_none, status, detail)
     status: started | already_running | failed
     """
     if dashboard_online():
-        return None, "already_running"
+        return None, "already_running", ""
 
     env = os.environ.copy()
     env["TUP_PORT"] = str(DASHBOARD_PORT)
@@ -394,23 +411,41 @@ def launch_server(background: bool):
         "env": env,
         "creationflags": creationflags if os.name == "nt" else 0,
     }
+    log_handle = None
+    try:
+        SERVER_STARTUP_LOG.unlink(missing_ok=True)
+    except Exception:
+        pass
     if background:
-        kwargs["stdout"] = subprocess.DEVNULL
-        kwargs["stderr"] = subprocess.DEVNULL
+        log_handle = open(SERVER_STARTUP_LOG, "w", encoding="utf-8", errors="replace")
+        kwargs["stdout"] = log_handle
+        kwargs["stderr"] = subprocess.STDOUT
 
     try:
         proc = subprocess.Popen([PYTHON_EXE, SERVER_SCRIPT], **kwargs)
-    except Exception:
-        return None, "failed"
+    except Exception as exc:
+        if log_handle is not None:
+            log_handle.close()
+        return None, "failed", str(exc)
+    finally:
+        if log_handle is not None:
+            log_handle.close()
 
-    if wait_dashboard(timeout_sec=30):
-        return proc, "started"
+    if wait_dashboard(timeout_sec=30, server_proc=proc):
+        return proc, "started", ""
 
     try:
         proc.terminate()
     except Exception:
         pass
-    return None, "failed"
+    detail = ""
+    if proc.poll() is not None:
+        detail = read_startup_log_tail()
+        if not detail:
+            detail = f"Processo do servidor encerrou com codigo {proc.returncode}."
+    elif SERVER_STARTUP_LOG.exists():
+        detail = f"Veja o log em {SERVER_STARTUP_LOG}"
+    return None, "failed", detail
 
 
 def open_dashboard():
@@ -577,7 +612,7 @@ def main():
             cprint(msg, "red")
         return 1
 
-    server_proc, status = launch_server(background=args.tray)
+    server_proc, status, detail = launch_server(background=args.tray)
 
     if status == "already_running":
         msg = f"O dashboard ja esta em execucao em {DASHBOARD_URL}"
@@ -588,6 +623,8 @@ def main():
 
     if status == "failed":
         msg = f"Nao foi possivel iniciar o servidor em {DASHBOARD_URL}"
+        if detail:
+            msg = f"{msg}\n\nDetalhe: {detail}"
         if args.tray:
             show_message("Tradutor Universal de PDF", msg, is_error=True)
         else:
