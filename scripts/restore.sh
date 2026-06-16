@@ -11,10 +11,17 @@ SRC="$1"
 DATA_ROOT="${DATA_DIR_FOR_BACKUP:-${BASE_DIR:-./data}}"
 
 DOCKER_BIN="${DOCKER_BIN:-docker}"
+TAR_BIN="${TAR_BIN:-tar}"
 docker_cmd() {
   local docker_parts=()
   read -r -a docker_parts <<< "$DOCKER_BIN"
   "${docker_parts[@]}" "$@"
+}
+
+tar_cmd() {
+  local tar_parts=()
+  read -r -a tar_parts <<< "$TAR_BIN"
+  "${tar_parts[@]}" "$@"
 }
 
 compose() {
@@ -23,7 +30,7 @@ compose() {
 
 if [ -f "${SRC}/data.tar.gz" ]; then
   mkdir -p "$DATA_ROOT"
-  tar -xzf "${SRC}/data.tar.gz" -C "$DATA_ROOT"
+  tar_cmd --overwrite --no-same-owner -xzf "${SRC}/data.tar.gz" -C "$DATA_ROOT"
 fi
 
 if [ -f "${SRC}/postgres.sql" ]; then
