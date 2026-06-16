@@ -5,12 +5,13 @@ cd "$(dirname "$0")/.."
 
 MODEL="${LLM_MODEL:-qwen3.5:9b}"
 BASE_URL="${LLM_BASE_URL:-http://localhost:11434}"
+TIMEOUT="${LLM_TIMEOUT_SECONDS:-600}"
 
 python - <<PY
 from translator.providers.inference import OllamaProvider, TranslationRequest
 import time
 
-provider = OllamaProvider("${BASE_URL}", "${MODEL}", timeout=120, retries=1)
+provider = OllamaProvider("${BASE_URL}", "${MODEL}", timeout=int("${TIMEOUT}"), retries=1)
 print(provider.health())
 sample = "The wizard casts a spell at the beginning of the round."
 start = time.perf_counter()
