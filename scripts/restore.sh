@@ -8,6 +8,7 @@ fi
 
 cd "$(dirname "$0")/.."
 SRC="$1"
+DATA_ROOT="${DATA_DIR_FOR_BACKUP:-${BASE_DIR:-./data}}"
 
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 docker_cmd() {
@@ -21,7 +22,8 @@ compose() {
 }
 
 if [ -f "${SRC}/data.tar.gz" ]; then
-  tar -xzf "${SRC}/data.tar.gz"
+  mkdir -p "$DATA_ROOT"
+  tar -xzf "${SRC}/data.tar.gz" -C "$DATA_ROOT"
 fi
 
 if [ -f "${SRC}/postgres.sql" ]; then

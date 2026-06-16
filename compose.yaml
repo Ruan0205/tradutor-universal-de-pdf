@@ -9,6 +9,7 @@ services:
     environment:
       APP_ENV: production
       APP_PORT: 8050
+      BASE_DIR: /data
       DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
       REDIS_URL: redis://redis:6379/0
       LLM_PROVIDER: ollama
@@ -37,6 +38,7 @@ services:
       - path: .env
         required: false
     environment:
+      BASE_DIR: /data
       DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
       REDIS_URL: redis://redis:6379/0
       LLM_PROVIDER: ollama
@@ -58,6 +60,7 @@ services:
       - path: .env
         required: false
     environment:
+      BASE_DIR: /data
       DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
       REDIS_URL: redis://redis:6379/0
     volumes:
@@ -74,6 +77,7 @@ services:
       - path: .env
         required: false
     environment:
+      BASE_DIR: /data
       DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
       REDIS_URL: redis://redis:6379/0
     volumes:

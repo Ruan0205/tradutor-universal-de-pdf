@@ -17,14 +17,15 @@ compose() {
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_ROOT="${BACKUP_DIR:-./backups}"
 DEST="${BACKUP_ROOT}/${STAMP}"
+DATA_ROOT="${DATA_DIR_FOR_BACKUP:-${BASE_DIR:-./data}}"
 mkdir -p "$DEST"
 
 if compose ps postgres >/dev/null 2>&1; then
   compose exec -T postgres pg_dump -U translator -d translator > "${DEST}/postgres.sql"
 fi
 
-if [ -d data ]; then
-  tar -czf "${DEST}/data.tar.gz" data
+if [ -d "$DATA_ROOT" ]; then
+  tar -czf "${DEST}/data.tar.gz" -C "$DATA_ROOT" .
 fi
 
 cp .env "${DEST}/env.backup" 2>/dev/null || true
