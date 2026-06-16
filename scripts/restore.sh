@@ -10,8 +10,14 @@ cd "$(dirname "$0")/.."
 SRC="$1"
 
 DOCKER_BIN="${DOCKER_BIN:-docker}"
+docker_cmd() {
+  local docker_parts=()
+  read -r -a docker_parts <<< "$DOCKER_BIN"
+  "${docker_parts[@]}" "$@"
+}
+
 compose() {
-  ${DOCKER_BIN} compose "$@"
+  docker_cmd compose "$@"
 }
 
 if [ -f "${SRC}/data.tar.gz" ]; then

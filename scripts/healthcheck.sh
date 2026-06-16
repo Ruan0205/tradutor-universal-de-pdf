@@ -2,8 +2,14 @@
 set -euo pipefail
 
 DOCKER_BIN="${DOCKER_BIN:-docker}"
+docker_cmd() {
+  local docker_parts=()
+  read -r -a docker_parts <<< "$DOCKER_BIN"
+  "${docker_parts[@]}" "$@"
+}
+
 compose() {
-  ${DOCKER_BIN} compose "$@"
+  docker_cmd compose "$@"
 }
 
 PORT="${APP_PORT:-8050}"
