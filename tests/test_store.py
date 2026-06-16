@@ -40,6 +40,20 @@ class StoreTests(unittest.TestCase):
 
             self.assertEqual(first["id"], second["id"])
 
+    def test_can_resubmit_completed_checksum_from_input_queue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "sample.pdf"
+            make_pdf(pdf)
+            store = init_store(f"sqlite:///{root / 'jobs.db'}")
+
+            first = store.submit_pdf(pdf)
+            store.update_job(first["id"], status="completed")
+            second = store.submit_pdf(pdf, reuse_existing=False)
+
+            self.assertNotEqual(first["id"], second["id"])
+            self.assertEqual(second["status"], "queued")
+
     def test_glossary_and_translation_memory_are_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

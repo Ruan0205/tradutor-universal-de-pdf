@@ -289,6 +289,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
         <div class="eta-item"><div class="v" id="etaRemaining">--</div><div class="l">Tempo Restante</div></div>
         <div class="eta-item"><div class="v" id="etaFinish">--</div><div class="l">Previsão Término</div></div>
         <div class="eta-item"><div class="v" id="etaSpeed">--</div><div class="l">Velocidade</div></div>
+        <div class="eta-item"><div class="v" id="etaTokens">--</div><div class="l">Tokens/s</div></div>
         <div class="eta-item"><div class="v" id="etaTotalTime">--</div><div class="l">Tempo Total Gasto</div></div>
       </div>
     </div>
@@ -426,6 +427,13 @@ button { cursor:pointer; font-family:inherit; border:none; }
           <div class="info">
             <h4>🧠 IA Rebuild (Experimental)</h4>
             <small>Apaga o texto original com inpainting e recria o texto traduzido tentando manter estilo visual da arte.</small>
+          </div>
+          <button class="btn btn-sm btn-secondary">Usar</button>
+        </div>
+        <div class="model-card" id="imgModeGoogleTranslate" onclick="setImageTextMode('google_translate_images')">
+          <div class="info">
+            <h4>Google Tradutor Imagens</h4>
+            <small>Modo opcional para recortes de texto em imagem usando fluxo externo configurado. Desativado por padrão até haver credenciais e consentimento.</small>
           </div>
           <button class="btn btn-sm btn-secondary">Usar</button>
         </div>
@@ -1020,7 +1028,7 @@ function renderSidebar() {
 
   const dotP = document.querySelector('#pipelineStatus .status-dot');
   const ps = DATA.status;
-  dotP.className = 'status-dot ' + (ps === 'running' ? 'on' : ps === 'paused' ? 'warn' : 'off');
+  dotP.className = 'status-dot ' + (DATA.pipeline_alive ? (ps === 'paused' ? 'warn' : 'on') : 'off');
 
   const dotV = document.querySelector('#validatorStatus .status-dot');
   dotV.className = 'status-dot ' + (DATA.validator_alive ? 'on' : 'off');
@@ -1082,6 +1090,7 @@ function renderDashboard() {
   document.getElementById('etaRemaining').textContent = s.eta_str || '--';
   document.getElementById('etaFinish').textContent = s.finish_time || '--';
   document.getElementById('etaSpeed').textContent = s.sec_per_mb ? `${s.sec_per_mb} s/MB` : '--';
+  document.getElementById('etaTokens').textContent = s.tokens_per_second ? `${s.tokens_per_second}` : '--';
   // Tempo Total Gasto: inclui livro atual em progresso
   const totalElapsed = [s.total_elapsed_sec, s.pipeline_elapsed_sec, s.total_time_sec]
     .find(v => Number.isFinite(v));
@@ -1097,6 +1106,8 @@ function renderDashboard() {
     const curPctBook = totalPages > 0 ? Math.round(curPage / totalPages * 100) : 0;
     const elapsed = s.current_elapsed_sec;
     const elStr = Number.isFinite(elapsed) ? fmtDur(elapsed) : '--';
+    const tokenText = s.current_total_tokens ? `${s.current_total_tokens} tokens` : (s.total_tokens ? `${s.total_tokens} tokens total` : '-- tokens');
+    const tokenSpeed = s.current_tokens_per_second || s.tokens_per_second;
     const previewHtml = preview.available ? `
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
           <a class="btn btn-sm btn-secondary" href="${preview.url}" target="_blank" rel="noopener">
@@ -1110,6 +1121,8 @@ function renderDashboard() {
           <span>📁 ${cur.size_mb || '?'} MB</span>
           <span>📄 Página ${curPage}/${totalPages}</span>
           <span>⏱ ${elStr}</span>
+          <span>Tokens: ${tokenText}</span>
+          <span>${tokenSpeed ? tokenSpeed + ' tok/s' : '-- tok/s'}</span>
           <span>📊 Livro #${st.book_index || '?'} de ${st.total_books || '?'}</span>
           ${isPaused ? '<span style="color:var(--yellow)">⏸ PAUSADO</span>' : ''}
         </div>
@@ -1291,6 +1304,7 @@ function renderModels() {
   const imageMode = (cfg.image_text_mode || 'legacy').toLowerCase();
   const cardLegacy = document.getElementById('imgModeLegacy');
   const cardAi = document.getElementById('imgModeAiRebuild');
+  const cardGoogle = document.getElementById('imgModeGoogleTranslate');
   if (cardLegacy) {
     cardLegacy.classList.toggle('active', imageMode === 'legacy');
     const btn = cardLegacy.querySelector('button');
@@ -1305,6 +1319,14 @@ function renderModels() {
     if (btn) {
       btn.className = 'btn btn-sm ' + (imageMode === 'ai_rebuild' ? 'btn-primary' : 'btn-secondary');
       btn.textContent = imageMode === 'ai_rebuild' ? 'Ativo' : 'Usar';
+    }
+  }
+  if (cardGoogle) {
+    cardGoogle.classList.toggle('active', imageMode === 'google_translate_images');
+    const btn = cardGoogle.querySelector('button');
+    if (btn) {
+      btn.className = 'btn btn-sm ' + (imageMode === 'google_translate_images' ? 'btn-primary' : 'btn-secondary');
+      btn.textContent = imageMode === 'google_translate_images' ? 'Ativo' : 'Usar';
     }
   }
 

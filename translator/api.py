@@ -269,7 +269,7 @@ def create_app() -> FastAPI:
     def legacy_start(_: None = Depends(require_auth), settings: Settings = Depends(get_settings), store: JobStore = Depends(get_store)):
         submitted = []
         for path in sorted(settings.input_dir.glob("*.pdf")):
-            job = store.submit_pdf(path, metadata={"submitted_by": "dashboard", "authorized": False})
+            job = store.submit_pdf(path, metadata={"submitted_by": "dashboard", "authorized": False}, reuse_existing=False)
             if job["status"] == JobStatus.QUEUED.value:
                 dispatch_job(job["id"], settings)
             submitted.append({"id": job["id"], "name": path.name, "status": job["status"]})
@@ -432,7 +432,8 @@ def _legacy_config_defaults(settings: Settings) -> dict:
         "validation_model": settings.llm_model,
         "validation_pages": 10,
         "validation_method": "structural",
-        "image_text_mode": "ocr",
+        "image_text_mode": settings.image_text_mode,
+        "google_translate_images_enabled": False,
         "compute_backend": "cpu",
         "image_ai_selectable_only": True,
         "image_inpaint_radius": 3,
@@ -483,9 +484,25 @@ def _legacy_status(settings: Settings, store: JobStore) -> dict:
     queued = [job for job in jobs if job["status"] == JobStatus.QUEUED.value]
     completed = [job for job in jobs if job["status"] in {JobStatus.COMPLETED.value, JobStatus.NEEDS_REVIEW.value}]
     status = "running" if running else "paused" if paused else "idle"
-    books = _legacy_books(settings)
+    books = _legacy_books(settings, jobs)
     total = len(completed) + len(queued) + (1 if running else 0) + len(books["input"])
     state_job = running or paused
+    current_metadata = state_job.get("metadata", {}) if state_job else {}
+    current_metrics = current_metadata.get("translation_metrics", {}) if state_job else {}
+    current_elapsed = _job_elapsed_seconds(state_job) if state_job else None
+    completed_durations = [_job_elapsed_seconds(job) for job in completed]
+    completed_durations = [value for value in completed_durations if value and value > 0]
+    avg_book_seconds = (sum(completed_durations) / len(completed_durations)) if completed_durations else None
+    remaining_books = len(queued) + len(books["input"]) + (1 if running else 0)
+    eta_seconds = None
+    if running and state_job.get("progress", 0) > 0 and current_elapsed:
+        eta_seconds = max(0.0, (current_elapsed / max(1.0, float(state_job["progress"]))) * (100.0 - float(state_job["progress"])))
+        eta_seconds += max(0, remaining_books - 1) * (avg_book_seconds or 0)
+    elif avg_book_seconds:
+        eta_seconds = remaining_books * avg_book_seconds
+    aggregate_metrics = _aggregate_translation_metrics(jobs)
+    active_tokens_per_second = current_metrics.get("tokens_per_second") or aggregate_metrics.get("tokens_per_second")
+    total_elapsed = sum(completed_durations) + (current_elapsed or 0.0)
     state = {
         "status": status,
         "current_book": (
@@ -502,11 +519,17 @@ def _legacy_status(settings: Settings, store: JobStore) -> dict:
     stats = {
         "completed": len(completed),
         "total": max(total, len(books["input"]) + len(books["translated"])),
-        "eta_str": "--",
-        "finish_time": "--",
-        "sec_per_mb": None,
-        "current_elapsed_sec": _elapsed_seconds(state_job.get("updated_at")) if state_job else None,
-        "total_elapsed_sec": None,
+        "eta_str": _format_duration(eta_seconds) if eta_seconds is not None else "--",
+        "finish_time": _finish_time(eta_seconds) if eta_seconds is not None else "--",
+        "sec_per_mb": _seconds_per_mb(completed),
+        "current_elapsed_sec": current_elapsed,
+        "total_elapsed_sec": total_elapsed if total_elapsed > 0 else None,
+        "tokens_per_second": round(float(active_tokens_per_second or 0.0), 2) or None,
+        "current_tokens_per_second": round(float(current_metrics.get("tokens_per_second") or 0.0), 2) or None,
+        "total_tokens": int(aggregate_metrics.get("total_tokens") or 0),
+        "completion_tokens": int(aggregate_metrics.get("completion_tokens") or 0),
+        "prompt_tokens": int(aggregate_metrics.get("prompt_tokens") or 0),
+        "current_total_tokens": int(current_metrics.get("total_tokens") or 0),
     }
     return {
         "status": status,
@@ -516,18 +539,24 @@ def _legacy_status(settings: Settings, store: JobStore) -> dict:
         "books": books,
         "ollama": _legacy_ollama_status(settings),
         "preview": {"available": False},
-        "validator_alive": False,
-        "pipeline_alive": bool(running),
+        "validator_alive": True,
+        "pipeline_alive": True,
     }
 
 
-def _legacy_books(settings: Settings) -> dict:
+def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:
     validations = _legacy_validations(settings)
+    jobs_by_source = {Path(job["source_path"]).stem: job for job in jobs or []}
     return {
         "input": _list_pdfs(settings.input_dir),
         "translating": [],
         "translated": [
-            {**item, "validation": validations.get(item["name"])}
+            {
+                **item,
+                "validation": validations.get(item["name"]),
+                "timing": _book_timing(jobs_by_source.get(_source_stem_from_output(item["name"]))),
+                "tokens": _book_tokens(jobs_by_source.get(_source_stem_from_output(item["name"]))),
+            }
             for item in _list_pdfs(settings.output_dir, sort_mode="mtime_desc")
         ],
         "originals": _list_pdfs(settings.originals_dir),
@@ -617,6 +646,93 @@ def _elapsed_seconds(iso_value: str | None) -> float | None:
         return max(0.0, time.time() - start)
     except Exception:
         return None
+
+
+def _job_elapsed_seconds(job: dict | None) -> float | None:
+    if not job:
+        return None
+    metadata = job.get("metadata", {}) or {}
+    start = metadata.get("started_at") or job.get("created_at")
+    end = metadata.get("finished_at") or (None if job.get("status") == JobStatus.RUNNING.value else job.get("updated_at"))
+    start_ts = _iso_timestamp(start)
+    end_ts = _iso_timestamp(end) if end else time.time()
+    if start_ts is None or end_ts is None:
+        return None
+    return max(0.0, end_ts - start_ts)
+
+
+def _iso_timestamp(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "--"
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, sec = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {sec:02d}s"
+    return f"{sec}s"
+
+
+def _finish_time(seconds: float | None) -> str:
+    if seconds is None:
+        return "--"
+    return time.strftime("%H:%M", time.localtime(time.time() + max(0, seconds)))
+
+
+def _seconds_per_mb(jobs: list[dict]) -> float | None:
+    values: list[float] = []
+    for job in jobs:
+        elapsed = _job_elapsed_seconds(job)
+        size_mb = _file_size_mb(Path(job["source_path"]))
+        if elapsed and size_mb > 0:
+            values.append(elapsed / size_mb)
+    if not values:
+        return None
+    return round(sum(values) / len(values), 1)
+
+
+def _aggregate_translation_metrics(jobs: list[dict]) -> dict:
+    total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "duration_seconds": 0.0}
+    for job in jobs:
+        metrics = (job.get("metadata", {}) or {}).get("translation_metrics", {}) or {}
+        total["prompt_tokens"] += int(metrics.get("prompt_tokens") or 0)
+        total["completion_tokens"] += int(metrics.get("completion_tokens") or 0)
+        total["total_tokens"] += int(metrics.get("total_tokens") or 0)
+        total["duration_seconds"] += float(metrics.get("duration_seconds") or 0.0)
+    duration = float(total["duration_seconds"])
+    total["tokens_per_second"] = round(total["completion_tokens"] / duration, 2) if duration > 0 else 0.0
+    return total
+
+
+def _book_timing(job: dict | None) -> dict:
+    elapsed = _job_elapsed_seconds(job)
+    return {"duration_sec": elapsed} if elapsed is not None else {}
+
+
+def _book_tokens(job: dict | None) -> dict:
+    if not job:
+        return {}
+    return dict((job.get("metadata", {}) or {}).get("translation_metrics", {}) or {})
+
+
+def _source_stem_from_output(name: str) -> str:
+    stem = Path(name).stem
+    for suffix in [".traduzido", ".pesquisavel", ".original-pesquisavel", ".revisao", ".comparacao"]:
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
 
 
 def _safe_pdf_response(root: Path, filename: str) -> FileResponse:

@@ -49,7 +49,11 @@ class ProviderTests(unittest.TestCase):
                                         "confidence": 0.9,
                                     }
                                 )
-                            }
+                            },
+                            "prompt_eval_count": 12,
+                            "eval_count": 8,
+                            "eval_duration": 2_000_000_000,
+                            "total_duration": 3_000_000_000,
                         }
                     ).encode("utf-8")
 
@@ -70,6 +74,10 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(seen["payload"]["options"]["num_ctx"], 32768)
         self.assertEqual(seen["payload"]["options"]["num_gpu"], 0)
         self.assertEqual(seen["payload"]["keep_alive"], "24h")
+        self.assertEqual(result.prompt_tokens, 12)
+        self.assertEqual(result.completion_tokens, 8)
+        self.assertEqual(result.total_tokens, 20)
+        self.assertEqual(result.tokens_per_second, 4.0)
 
 
 if __name__ == "__main__":

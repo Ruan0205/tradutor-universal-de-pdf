@@ -989,8 +989,10 @@ class PDFTranslator:
     @staticmethod
     def _get_image_text_mode(is_scanned: bool) -> str:
         mode = str(CFG.get("image_text_mode", "legacy")).strip().lower()
-        if mode not in {"legacy", "ai_rebuild"}:
+        if mode not in {"legacy", "ai_rebuild", "google_translate_images"}:
             mode = "legacy"
+        if mode == "google_translate_images" and not CFG.get("google_translate_images_enabled", False):
+            return "legacy"
         if is_scanned and CFG.get("image_ai_selectable_only", True):
             return "legacy"
         return mode

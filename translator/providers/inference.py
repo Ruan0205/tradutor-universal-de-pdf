@@ -26,6 +26,11 @@ class TranslationResult:
     model: str
     confidence: float
     warnings: list[str]
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    duration_seconds: float = 0.0
+    tokens_per_second: float = 0.0
 
 
 class InferenceProvider(Protocol):
@@ -48,7 +53,21 @@ class MockProvider:
     def translate(self, request: TranslationRequest) -> TranslationResult:
         text = request.text.strip()
         translated = text if not text else f"[pt-BR] {text}"
-        return TranslationResult(request.block_id, translated, self.name, self.model, 1.0, [])
+        prompt_tokens = _estimate_tokens(request.text)
+        completion_tokens = _estimate_tokens(translated)
+        return TranslationResult(
+            request.block_id,
+            translated,
+            self.name,
+            self.model,
+            1.0,
+            [],
+            prompt_tokens,
+            completion_tokens,
+            prompt_tokens + completion_tokens,
+            0.0,
+            0.0,
+        )
 
     def health(self) -> dict:
         return {"ok": True, "provider": self.name, "model": self.model}
@@ -102,12 +121,29 @@ class OllamaProvider:
             },
             ensure_ascii=False,
         )
-        response = self._chat(system, user)
-        parsed = _extract_json(response)
+        response_text, usage = self._chat(system, user)
+        parsed = _extract_json(response_text)
         translated = str(parsed.get("translated_text") or request.text)
         confidence = float(parsed.get("confidence") or 0.75)
         warnings = [str(item) for item in parsed.get("warnings", [])]
-        return TranslationResult(request.block_id, translated, self.name, self.model, confidence, warnings)
+        prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(system + user))
+        completion_tokens = int(usage.get("completion_tokens") or _estimate_tokens(translated))
+        total_tokens = int(usage.get("total_tokens") or prompt_tokens + completion_tokens)
+        duration_seconds = float(usage.get("duration_seconds") or 0.0)
+        tokens_per_second = float(usage.get("tokens_per_second") or 0.0)
+        return TranslationResult(
+            request.block_id,
+            translated,
+            self.name,
+            self.model,
+            confidence,
+            warnings,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            duration_seconds,
+            tokens_per_second,
+        )
 
     def health(self) -> dict:
         try:
@@ -118,7 +154,7 @@ class OllamaProvider:
         except Exception as exc:
             return {"ok": False, "provider": self.name, "model": self.model, "error": str(exc)}
 
-    def _chat(self, system: str, user: str) -> str:
+    def _chat(self, system: str, user: str) -> tuple[str, dict[str, float | int]]:
         options: dict[str, float | int] = {"temperature": self.temperature}
         if self.max_output_tokens:
             options["num_predict"] = self.max_output_tokens
@@ -152,7 +188,20 @@ class OllamaProvider:
                 )
                 with urllib.request.urlopen(req, timeout=self.timeout) as response:
                     data = json.loads(response.read())
-                return str(data.get("message", {}).get("content", ""))
+                eval_count = int(data.get("eval_count") or 0)
+                prompt_eval_count = int(data.get("prompt_eval_count") or 0)
+                total_tokens = eval_count + prompt_eval_count
+                total_duration = float(data.get("total_duration") or data.get("eval_duration") or 0.0) / 1_000_000_000
+                eval_duration = float(data.get("eval_duration") or 0.0) / 1_000_000_000
+                tokens_per_second = (eval_count / eval_duration) if eval_count and eval_duration > 0 else 0.0
+                usage = {
+                    "prompt_tokens": prompt_eval_count,
+                    "completion_tokens": eval_count,
+                    "total_tokens": total_tokens,
+                    "duration_seconds": total_duration,
+                    "tokens_per_second": tokens_per_second,
+                }
+                return str(data.get("message", {}).get("content", "")), usage
             except Exception as exc:
                 last_error = exc
                 if attempt + 1 < self.retries:
@@ -196,7 +245,23 @@ class OpenAICompatibleProvider:
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             data = json.loads(response.read())
         translated = data["choices"][0]["message"]["content"].strip()
-        return TranslationResult(request.block_id, translated, self.name, self.model, 0.8, [])
+        usage = data.get("usage", {}) or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(request.text))
+        completion_tokens = int(usage.get("completion_tokens") or _estimate_tokens(translated))
+        total_tokens = int(usage.get("total_tokens") or prompt_tokens + completion_tokens)
+        return TranslationResult(
+            request.block_id,
+            translated,
+            self.name,
+            self.model,
+            0.8,
+            [],
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            0.0,
+            0.0,
+        )
 
     def health(self) -> dict:
         return {"ok": True, "provider": self.name, "model": self.model}
@@ -219,6 +284,10 @@ def _extract_json(text: str) -> dict:
         if start >= 0 and end > start:
             return json.loads(text[start : end + 1])
         raise
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, int(len(text) / 4))
 
 
 def make_inference_provider(settings: Settings) -> InferenceProvider:

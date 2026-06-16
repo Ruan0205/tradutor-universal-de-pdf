@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -48,6 +50,7 @@ class Settings:
     llm_reasoning_mode: str = "off"
     job_dispatcher: str = "inline"
     watch_stability_seconds: float = 2.0
+    image_text_mode: str = "ocr"
     ocr_provider: str = "auto"
     google_integration_enabled: bool = False
     max_concurrent_books: int = 1
@@ -101,7 +104,7 @@ class Settings:
 def load_settings() -> Settings:
     base_dir = Path(os.environ.get("BASE_DIR", "data"))
     password_file = os.environ.get("INITIAL_ADMIN_PASSWORD_FILE")
-    return Settings(
+    settings = Settings(
         app_env=os.environ.get("APP_ENV", "development"),
         host=os.environ.get("APP_HOST", "0.0.0.0"),
         port=_int_env("APP_PORT", 8050),
@@ -137,9 +140,39 @@ def load_settings() -> Settings:
         llm_reasoning_mode=os.environ.get("LLM_REASONING_MODE", "off").strip().lower() or "off",
         job_dispatcher=os.environ.get("JOB_DISPATCHER", "inline").strip().lower() or "inline",
         watch_stability_seconds=float(os.environ.get("WATCH_STABILITY_SECONDS", "2.0") or 2.0),
+        image_text_mode=os.environ.get("IMAGE_TEXT_MODE", "ocr").strip().lower() or "ocr",
         ocr_provider=os.environ.get("OCR_PROVIDER", "auto"),
         google_integration_enabled=_bool_env("GOOGLE_INTEGRATION_ENABLED", False),
         max_concurrent_books=_int_env("MAX_CONCURRENT_BOOKS", 1),
         max_memory_percent=_int_env("MAX_MEMORY_PERCENT", 85),
         min_free_disk_gb=_int_env("MIN_FREE_DISK_GB", 20),
     )
+    return _apply_dashboard_config(settings)
+
+
+def _apply_dashboard_config(settings: Settings) -> Settings:
+    path = settings.base_dir / "dashboard_config.json"
+    if not path.exists():
+        return settings
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return settings
+
+    options = data.get("ollama_options", {}) or {}
+    updates = {}
+    if data.get("ollama_url"):
+        updates["llm_base_url"] = str(data["ollama_url"]).strip()
+    if data.get("model_name"):
+        updates["llm_model"] = str(data["model_name"]).strip()
+    if data.get("image_text_mode"):
+        updates["image_text_mode"] = str(data["image_text_mode"]).strip().lower()
+    if "temperature" in options:
+        updates["llm_temperature"] = float(options["temperature"])
+    if "num_ctx" in options and str(options["num_ctx"]).strip():
+        updates["llm_context_tokens"] = int(options["num_ctx"])
+    if "num_gpu" in options and str(options["num_gpu"]).strip():
+        updates["llm_num_gpu"] = int(options["num_gpu"])
+    if "num_predict" in options and str(options["num_predict"]).strip():
+        updates["llm_max_output_tokens"] = int(options["num_predict"])
+    return replace(settings, **updates) if updates else settings

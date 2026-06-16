@@ -135,14 +135,24 @@ class JobStore:
     def session(self) -> Session:
         return self.SessionLocal()
 
-    def submit_pdf(self, source_path: Path, *, priority: int = 0, metadata: Optional[dict] = None) -> Dict[str, Any]:
+    def submit_pdf(
+        self,
+        source_path: Path,
+        *,
+        priority: int = 0,
+        metadata: Optional[dict] = None,
+        reuse_existing: bool = True,
+    ) -> Dict[str, Any]:
         source_path = source_path.resolve()
         checksum = sha256_file(source_path)
         with self.session() as session:
             existing = session.execute(
                 select(JobRecord).where(JobRecord.checksum == checksum).order_by(JobRecord.created_at.desc())
             ).scalars().first()
-            if existing:
+            if existing and (
+                reuse_existing
+                or existing.status in {JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.PAUSED.value}
+            ):
                 return self.to_dict(existing)
 
             job = JobRecord(

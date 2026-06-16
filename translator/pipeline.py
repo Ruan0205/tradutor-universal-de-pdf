@@ -53,6 +53,11 @@ class PipelineRunner:
             provider=getattr(self.inference, "name", "unknown"),
             model=getattr(self.inference, "model", ""),
             error=None,
+            metadata={
+                **job.get("metadata", {}),
+                "started_at": job.get("metadata", {}).get("started_at") or now_iso(),
+                "translation_metrics": _empty_translation_metrics(),
+            },
         )
         artifacts: dict[str, Path] = {}
 
@@ -93,12 +98,19 @@ class PipelineRunner:
             )
 
             with self.stage(job_id, "translation"):
-                translated_ir = self._translate_ir(ir)
+                translated_ir, translation_metrics = self._translate_ir(ir, job_id)
                 translated_ir_path = job_dir / f"{source.stem}.translated.ir.json"
                 translated_ir_path.write_text(translated_ir.to_json(), encoding="utf-8")
                 artifacts["translated_ir"] = translated_ir_path
                 self.store.add_artifact(job_id, "translated_ir", translated_ir_path)
-                self.store.update_job(job_id, progress=58.0)
+                self.store.update_job(
+                    job_id,
+                    progress=58.0,
+                    metadata={
+                        **(self.store.get_job(job_id) or job).get("metadata", {}),
+                        "translation_metrics": translation_metrics,
+                    },
+                )
 
             self._complete_noop_stages(
                 job_id,
@@ -219,6 +231,10 @@ class PipelineRunner:
                 status=JobStatus.NEEDS_REVIEW.value if needs_human_review else JobStatus.COMPLETED.value,
                 current_stage="completed",
                 progress=100.0,
+                metadata={
+                    **(self.store.get_job(job_id) or job).get("metadata", {}),
+                    "finished_at": now_iso(),
+                },
             )
             return final_job
         except Exception as exc:
@@ -369,7 +385,7 @@ class PipelineRunner:
             tool_versions={"pipeline": "3.0.0-rc.1"},
         )
 
-    def _translate_ir(self, ir: IRDocument) -> IRDocument:
+    def _translate_ir(self, ir: IRDocument, job_id: str | None = None) -> tuple[IRDocument, dict]:
         glossary_terms = tuple(
             {
                 "source": item["source_term"],
@@ -378,7 +394,10 @@ class PipelineRunner:
             }
             for item in self.store.list_glossary_terms()
         )
+        metrics = _empty_translation_metrics()
         for page in ir.pages:
+            if job_id:
+                self.store.update_job(job_id, current_page=page.page_number)
             for block in page.blocks:
                 if not block.original_text.strip():
                     continue
@@ -393,6 +412,16 @@ class PipelineRunner:
                     for line in block.lines:
                         line.translated_text = block.translated_text if len(block.lines) == 1 else None
                         line.translation_confidence = 1.0
+                    _add_translation_metrics(
+                        metrics,
+                        {
+                            "prompt_tokens": _estimate_tokens(block.original_text),
+                            "completion_tokens": _estimate_tokens(block.translated_text or ""),
+                            "total_tokens": _estimate_tokens(block.original_text) + _estimate_tokens(block.translated_text or ""),
+                            "duration_seconds": 0.0,
+                            "tokens_per_second": 0.0,
+                        },
+                    )
                     continue
 
                 result = self.inference.translate(
@@ -408,6 +437,23 @@ class PipelineRunner:
                 block.translation_confidence = result.confidence
                 block.status = "translated"
                 block.warnings.extend(result.warnings)
+                _add_translation_metrics(
+                    metrics,
+                    {
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.total_tokens,
+                        "duration_seconds": result.duration_seconds,
+                        "tokens_per_second": result.tokens_per_second,
+                    },
+                )
+                if job_id:
+                    current_job = self.store.get_job(job_id)
+                    if current_job:
+                        self.store.update_job(
+                            job_id,
+                            metadata={**current_job.get("metadata", {}), "translation_metrics": metrics},
+                        )
                 self.store.save_translation_memory(
                     block.original_text,
                     result.translated_text,
@@ -419,7 +465,7 @@ class PipelineRunner:
                     line.translation_confidence = result.confidence
         ir.updated_at = now_iso()
         ir.history.append({"at": now_iso(), "event": "translated", "provider": self.inference.name, "model": self.inference.model})
-        return ir
+        return ir, metrics
 
     @staticmethod
     def _compose_translated_pdf(source: Path, ir: IRDocument, output: Path) -> None:
@@ -665,3 +711,29 @@ def _bbox_intersects(left: BBox, right: BBox) -> bool:
         or left.y1 <= right.y0
         or right.y1 <= left.y0
     )
+
+
+def _empty_translation_metrics() -> dict:
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "duration_seconds": 0.0,
+        "tokens_per_second": 0.0,
+        "blocks": 0,
+    }
+
+
+def _add_translation_metrics(target: dict, usage: dict) -> None:
+    target["prompt_tokens"] = int(target.get("prompt_tokens", 0)) + int(usage.get("prompt_tokens", 0) or 0)
+    target["completion_tokens"] = int(target.get("completion_tokens", 0)) + int(usage.get("completion_tokens", 0) or 0)
+    target["total_tokens"] = int(target.get("total_tokens", 0)) + int(usage.get("total_tokens", 0) or 0)
+    target["duration_seconds"] = float(target.get("duration_seconds", 0.0)) + float(usage.get("duration_seconds", 0.0) or 0.0)
+    target["blocks"] = int(target.get("blocks", 0)) + 1
+    duration = float(target.get("duration_seconds", 0.0))
+    completion_tokens = int(target.get("completion_tokens", 0))
+    target["tokens_per_second"] = round(completion_tokens / duration, 2) if duration > 0 else 0.0
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, int(len(text) / 4))
