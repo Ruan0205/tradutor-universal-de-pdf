@@ -111,7 +111,7 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:0.5.7
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
     volumes:
       - ollama-data:/root/.ollama
     restart: unless-stopped
