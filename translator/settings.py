@@ -42,7 +42,12 @@ class Settings:
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 3
     llm_max_output_tokens: Optional[int] = None
+    llm_context_tokens: Optional[int] = 32768
+    llm_num_gpu: Optional[int] = 0
+    llm_keep_alive: Optional[str] = "24h"
     llm_reasoning_mode: str = "off"
+    job_dispatcher: str = "inline"
+    watch_stability_seconds: float = 2.0
     ocr_provider: str = "auto"
     google_integration_enabled: bool = False
     max_concurrent_books: int = 1
@@ -118,7 +123,20 @@ def load_settings() -> Settings:
             if os.environ.get("LLM_MAX_OUTPUT_TOKENS", "").strip()
             else None
         ),
+        llm_context_tokens=(
+            _int_env("LLM_CONTEXT_TOKENS", 32768)
+            if os.environ.get("LLM_CONTEXT_TOKENS", "").strip()
+            else 32768
+        ),
+        llm_num_gpu=(
+            _int_env("LLM_NUM_GPU", 0)
+            if os.environ.get("LLM_NUM_GPU", "").strip()
+            else 0
+        ),
+        llm_keep_alive=os.environ.get("LLM_KEEP_ALIVE", "24h").strip() or None,
         llm_reasoning_mode=os.environ.get("LLM_REASONING_MODE", "off").strip().lower() or "off",
+        job_dispatcher=os.environ.get("JOB_DISPATCHER", "inline").strip().lower() or "inline",
+        watch_stability_seconds=float(os.environ.get("WATCH_STABILITY_SECONDS", "2.0") or 2.0),
         ocr_provider=os.environ.get("OCR_PROVIDER", "auto"),
         google_integration_enabled=_bool_env("GOOGLE_INTEGRATION_ENABLED", False),
         max_concurrent_books=_int_env("MAX_CONCURRENT_BOOKS", 1),

@@ -20,6 +20,9 @@ class ProviderTests(unittest.TestCase):
             "qwen3.5:9b",
             reasoning_mode="off",
             max_output_tokens=128,
+            context_tokens=32768,
+            num_gpu=0,
+            keep_alive="24h",
         )
         seen = {}
 
@@ -64,6 +67,9 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.translated_text, "O mago lanca um feitico.")
         self.assertIs(seen["payload"]["think"], False)
         self.assertEqual(seen["payload"]["options"]["num_predict"], 128)
+        self.assertEqual(seen["payload"]["options"]["num_ctx"], 32768)
+        self.assertEqual(seen["payload"]["options"]["num_gpu"], 0)
+        self.assertEqual(seen["payload"]["keep_alive"], "24h")
 
 
 if __name__ == "__main__":

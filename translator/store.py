@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     select,
+    update,
 )
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -180,6 +181,29 @@ class JobStore:
             ).scalars().first()
             return self.to_dict(job) if job else None
 
+    def claim_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self.session() as session:
+            result = session.execute(
+                update(JobRecord)
+                .where(JobRecord.id == job_id, JobRecord.status == JobStatus.QUEUED.value)
+                .values(status=JobStatus.RUNNING.value, current_stage="queued", updated_at=utcnow())
+            )
+            if result.rowcount != 1:
+                session.rollback()
+                return None
+            session.commit()
+            job = session.get(JobRecord, job_id)
+            return self.to_dict(job) if job else None
+
+    def claim_next_queued_job(self) -> Optional[Dict[str, Any]]:
+        candidate = self.next_queued_job()
+        if not candidate:
+            return None
+        claimed = self.claim_job(candidate["id"])
+        if claimed and claimed["status"] == JobStatus.RUNNING.value:
+            return claimed
+        return None
+
     def update_job(self, job_id: str, **fields: Any) -> Dict[str, Any]:
         with self.session() as session:
             job = session.get(JobRecord, job_id)
@@ -217,6 +241,19 @@ class JobStore:
                 stage.artifact_path = str(artifact_path)
             session.commit()
 
+    def set_stage_skipped(self, job_id: str, name: str, *, reason: str = "") -> None:
+        with self.session() as session:
+            stage = self._stage(session, job_id, name)
+            stage.status = StageStatus.SKIPPED.value
+            stage.error = reason or None
+            stage.started_at = stage.started_at or utcnow()
+            stage.finished_at = utcnow()
+            job = session.get(JobRecord, job_id)
+            if job:
+                job.current_stage = name
+                job.updated_at = utcnow()
+            session.commit()
+
     def set_stage_failed(self, job_id: str, name: str, error: str, *, duration_ms: int = 0) -> None:
         with self.session() as session:
             stage = self._stage(session, job_id, name)
@@ -245,6 +282,20 @@ class JobStore:
                 "checksum": artifact.checksum,
             }
 
+    def get_artifact(self, artifact_id: int) -> Optional[Dict[str, Any]]:
+        with self.session() as session:
+            row = session.get(ArtifactRecord, artifact_id)
+            if not row:
+                return None
+            return {
+                "id": row.id,
+                "job_id": row.job_id,
+                "kind": row.kind,
+                "path": row.path,
+                "checksum": row.checksum,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+
     def list_artifacts(self, job_id: str) -> list[Dict[str, Any]]:
         with self.session() as session:
             rows = session.execute(select(ArtifactRecord).where(ArtifactRecord.job_id == job_id)).scalars().all()
@@ -259,6 +310,99 @@ class JobStore:
                 }
                 for row in rows
             ]
+
+    def list_glossary_terms(self) -> list[Dict[str, Any]]:
+        with self.session() as session:
+            rows = session.execute(select(GlossaryTermRecord).order_by(GlossaryTermRecord.source_term.asc())).scalars().all()
+            return [
+                {
+                    "id": row.id,
+                    "source_term": row.source_term,
+                    "target_term": row.target_term,
+                    "notes": row.notes,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in rows
+            ]
+
+    def upsert_glossary_term(self, source_term: str, target_term: str, *, notes: str = "") -> Dict[str, Any]:
+        source_term = source_term.strip()
+        target_term = target_term.strip()
+        if not source_term or not target_term:
+            raise ValueError("Glossary terms require source_term and target_term")
+        with self.session() as session:
+            row = session.execute(
+                select(GlossaryTermRecord).where(GlossaryTermRecord.source_term == source_term)
+            ).scalars().first()
+            if row:
+                row.target_term = target_term
+                row.notes = notes
+            else:
+                row = GlossaryTermRecord(source_term=source_term, target_term=target_term, notes=notes)
+                session.add(row)
+            session.commit()
+            return {
+                "id": row.id,
+                "source_term": row.source_term,
+                "target_term": row.target_term,
+                "notes": row.notes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+
+    def get_translation_memory(self, source_text: str) -> Optional[Dict[str, Any]]:
+        source_hash = _source_hash(source_text)
+        with self.session() as session:
+            row = session.execute(
+                select(TranslationMemoryRecord).where(TranslationMemoryRecord.source_hash == source_hash)
+            ).scalars().first()
+            if not row:
+                return None
+            return {
+                "id": row.id,
+                "source_hash": row.source_hash,
+                "source_text": row.source_text,
+                "translated_text": row.translated_text,
+                "provider": row.provider,
+                "model": row.model,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+
+    def save_translation_memory(
+        self,
+        source_text: str,
+        translated_text: str,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        source_hash = _source_hash(source_text)
+        with self.session() as session:
+            row = session.execute(
+                select(TranslationMemoryRecord).where(TranslationMemoryRecord.source_hash == source_hash)
+            ).scalars().first()
+            if row:
+                row.translated_text = translated_text
+                row.provider = provider
+                row.model = model
+            else:
+                row = TranslationMemoryRecord(
+                    source_hash=source_hash,
+                    source_text=source_text,
+                    translated_text=translated_text,
+                    provider=provider,
+                    model=model,
+                )
+                session.add(row)
+            session.commit()
+            return {
+                "id": row.id,
+                "source_hash": row.source_hash,
+                "source_text": row.source_text,
+                "translated_text": row.translated_text,
+                "provider": row.provider,
+                "model": row.model,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
 
     def list_stages(self, job_id: str) -> list[Dict[str, Any]]:
         with self.session() as session:
@@ -306,6 +450,11 @@ class JobStore:
         if not stage:
             raise KeyError(f"Unknown stage {name!r} for job {job_id}")
         return stage
+
+
+def _source_hash(text: str) -> str:
+    normalized = " ".join(text.split()).casefold()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def init_store(database_url: str) -> JobStore:

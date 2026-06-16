@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 import time
 
+from .dispatch import dispatch_job
+from .domain import JobStatus
 from .settings import load_settings
 from .store import init_store
 
@@ -29,9 +31,12 @@ def scan_once() -> list[dict]:
     store = init_store(settings.database_url)
     submitted = []
     for path in sorted(settings.input_dir.glob("*.pdf")):
-        if not is_stable(path):
+        if not is_stable(path, wait_seconds=settings.watch_stability_seconds):
             continue
-        submitted.append(store.submit_pdf(path, metadata={"submitted_by": "watcher"}))
+        job = store.submit_pdf(path, metadata={"submitted_by": "watcher"})
+        submitted.append(job)
+        if job["status"] == JobStatus.QUEUED.value:
+            dispatch_job(job["id"], settings)
     return submitted
 
 

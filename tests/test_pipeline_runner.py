@@ -39,6 +39,8 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertEqual(result["status"], "completed")
             self.assertIn("document_ir", kinds)
             self.assertIn("translated_pdf", kinds)
+            self.assertIn("structural_validation", kinds)
+            self.assertIn("visual_validation", kinds)
             self.assertIn("manifest", kinds)
             self.assertTrue((settings.output_dir / "book.traduzido.pdf").exists())
 

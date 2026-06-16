@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import time
 from typing import Protocol
@@ -14,7 +14,8 @@ class TranslationRequest:
     block_id: str
     text: str
     source_lang: str = "English"
-    target_lang: str = "Português Brasileiro"
+    target_lang: str = "Brazilian Portuguese"
+    glossary_terms: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,9 @@ class OllamaProvider:
         retries: int = 3,
         reasoning_mode: str = "off",
         max_output_tokens: int | None = None,
+        context_tokens: int | None = None,
+        num_gpu: int | None = 0,
+        keep_alive: str | None = "24h",
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -74,19 +78,26 @@ class OllamaProvider:
         self.retries = retries
         self.reasoning_mode = reasoning_mode.strip().lower()
         self.max_output_tokens = max_output_tokens
+        self.context_tokens = context_tokens
+        self.num_gpu = num_gpu
+        self.keep_alive = keep_alive
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
         system = (
             "You are a professional English to Brazilian Portuguese translator. "
             "Return only valid JSON matching this schema: "
             "{\"block_id\":\"string\",\"translated_text\":\"string\",\"preserved_terms\":[],\"warnings\":[],\"confidence\":0.0}. "
-            "Preserve RPG proper nouns and conventional untranslated terms."
+            "Preserve RPG proper nouns and conventional untranslated terms. "
+            "Use the glossary exactly when a listed term appears. "
+            "Keep tables, numbers, dice notation, stat blocks, labels, and line breaks as stable as possible. "
+            "Adapt phrasing when needed so the translated text remains concise enough to fit the original layout."
         )
         user = json.dumps(
             {
                 "block_id": request.block_id,
                 "source_lang": request.source_lang,
                 "target_lang": request.target_lang,
+                "glossary_terms": list(request.glossary_terms),
                 "text": request.text,
             },
             ensure_ascii=False,
@@ -111,6 +122,10 @@ class OllamaProvider:
         options: dict[str, float | int] = {"temperature": self.temperature}
         if self.max_output_tokens:
             options["num_predict"] = self.max_output_tokens
+        if self.context_tokens:
+            options["num_ctx"] = self.context_tokens
+        if self.num_gpu is not None:
+            options["num_gpu"] = self.num_gpu
         request_data: dict[str, object] = {
             "model": self.model,
             "messages": [
@@ -120,13 +135,13 @@ class OllamaProvider:
             "stream": False,
             "options": options,
         }
+        if self.keep_alive:
+            request_data["keep_alive"] = self.keep_alive
         if self.reasoning_mode in {"off", "false", "0", "no"}:
             request_data["think"] = False
         elif self.reasoning_mode in {"on", "true", "1", "yes"}:
             request_data["think"] = True
-        payload = json.dumps(
-            request_data,
-        ).encode("utf-8")
+        payload = json.dumps(request_data).encode("utf-8")
         last_error: Exception | None = None
         for attempt in range(self.retries):
             try:
@@ -155,12 +170,21 @@ class OpenAICompatibleProvider:
         self.timeout = timeout
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
+        glossary_text = ""
+        if request.glossary_terms:
+            glossary_text = "\nGlossary: " + json.dumps(list(request.glossary_terms), ensure_ascii=False)
         payload = json.dumps(
             {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": "Translate to Brazilian Portuguese and return only the translated text."},
-                    {"role": "user", "content": request.text},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Translate to Brazilian Portuguese and return only the translated text. "
+                            "Preserve RPG proper nouns, table structure, numbers, and dice notation."
+                        ),
+                    },
+                    {"role": "user", "content": request.text + glossary_text},
                 ],
                 "temperature": 0.2,
             }
@@ -208,6 +232,9 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             retries=settings.llm_max_retries,
             reasoning_mode=settings.llm_reasoning_mode,
             max_output_tokens=settings.llm_max_output_tokens,
+            context_tokens=settings.llm_context_tokens,
+            num_gpu=settings.llm_num_gpu,
+            keep_alive=settings.llm_keep_alive,
         )
     if provider in {"llama.cpp", "llamacpp", "llama"}:
         return LlamaCppProvider(settings.llm_base_url, settings.llm_model, timeout=settings.llm_timeout_seconds)

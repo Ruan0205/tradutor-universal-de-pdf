@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import html
 import json
+import math
 from pathlib import Path
 import shutil
 import time
@@ -124,13 +125,59 @@ class PipelineRunner:
                 artifacts["text_validation"] = text_report_path
                 self.store.add_artifact(job_id, "text_validation", text_report_path)
 
-            self._complete_noop_stages(job_id, ["structural_validation", "visual_validation", "auto_correction", "human_review"])
+            with self.stage(job_id, "structural_validation"):
+                structural_report = self._validate_structure(translated_ir)
+                structural_report_path = job_dir / "structural_validation.json"
+                structural_report_path.write_text(json.dumps(structural_report, indent=2, ensure_ascii=False), encoding="utf-8")
+                artifacts["structural_validation"] = structural_report_path
+                self.store.add_artifact(job_id, "structural_validation", structural_report_path)
+
+            with self.stage(job_id, "visual_validation"):
+                visual_report = self._validate_visual(translated_ir)
+                visual_report_path = job_dir / "visual_validation.json"
+                visual_report_path.write_text(json.dumps(visual_report, indent=2, ensure_ascii=False), encoding="utf-8")
+                artifacts["visual_validation"] = visual_report_path
+                self.store.add_artifact(job_id, "visual_validation", visual_report_path)
+
+            needs_human_review = not (text_report["ok"] and structural_report["ok"] and visual_report["ok"])
+            if needs_human_review:
+                with self.stage(job_id, "auto_correction"):
+                    correction_report = self._make_correction_report(text_report, structural_report, visual_report)
+                    correction_report_path = job_dir / "auto_correction.json"
+                    correction_report_path.write_text(json.dumps(correction_report, indent=2, ensure_ascii=False), encoding="utf-8")
+                    artifacts["auto_correction"] = correction_report_path
+                    self.store.add_artifact(job_id, "auto_correction", correction_report_path)
+                with self.stage(job_id, "human_review"):
+                    review_report = {
+                        "ok": False,
+                        "reason": "One or more validation checks require manual review.",
+                        "text_validation": text_report,
+                        "structural_validation": structural_report,
+                        "visual_validation": visual_report,
+                    }
+                    review_report_path = job_dir / "human_review.json"
+                    review_report_path.write_text(json.dumps(review_report, indent=2, ensure_ascii=False), encoding="utf-8")
+                    artifacts["human_review"] = review_report_path
+                    self.store.add_artifact(job_id, "human_review", review_report_path)
+            else:
+                self.store.set_stage_skipped(job_id, "auto_correction", reason="All validations passed")
+                self.store.set_stage_skipped(job_id, "human_review", reason="All validations passed")
 
             with self.stage(job_id, "report_generation"):
                 report_json = self.settings.reports_dir / f"{source.stem}.relatorio.json"
                 report_html = self.settings.reports_dir / f"{source.stem}.relatorio.html"
                 manifest = self.settings.reports_dir / f"{source.stem}.manifest.json"
-                self._write_reports(job_id, job, artifacts, text_report, report_json, report_html, manifest)
+                self._write_reports(
+                    job_id,
+                    job,
+                    artifacts,
+                    text_report,
+                    structural_report,
+                    visual_report,
+                    report_json,
+                    report_html,
+                    manifest,
+                )
                 self.store.add_artifact(job_id, "report_json", report_json)
                 self.store.add_artifact(job_id, "report_html", report_html)
                 self.store.add_artifact(job_id, "manifest", manifest)
@@ -169,7 +216,7 @@ class PipelineRunner:
 
             final_job = self.store.update_job(
                 job_id,
-                status=JobStatus.COMPLETED.value,
+                status=JobStatus.NEEDS_REVIEW.value if needs_human_review else JobStatus.COMPLETED.value,
                 current_stage="completed",
                 progress=100.0,
             )
@@ -323,12 +370,37 @@ class PipelineRunner:
         )
 
     def _translate_ir(self, ir: IRDocument) -> IRDocument:
+        glossary_terms = tuple(
+            {
+                "source": item["source_term"],
+                "target": item["target_term"],
+                "notes": item.get("notes", ""),
+            }
+            for item in self.store.list_glossary_terms()
+        )
         for page in ir.pages:
             for block in page.blocks:
                 if not block.original_text.strip():
                     continue
+                cached = self.store.get_translation_memory(block.original_text)
+                if cached:
+                    block.translated_text = cached["translated_text"]
+                    block.translation_provider = cached.get("provider") or "translation-memory"
+                    block.translation_model = cached.get("model") or "cache"
+                    block.translation_confidence = 1.0
+                    block.status = "translated"
+                    block.warnings.append("translation_memory_hit")
+                    for line in block.lines:
+                        line.translated_text = block.translated_text if len(block.lines) == 1 else None
+                        line.translation_confidence = 1.0
+                    continue
+
                 result = self.inference.translate(
-                    TranslationRequest(block_id=block.block_id, text=block.original_text)
+                    TranslationRequest(
+                        block_id=block.block_id,
+                        text=block.original_text,
+                        glossary_terms=glossary_terms,
+                    )
                 )
                 block.translated_text = result.translated_text
                 block.translation_provider = result.provider
@@ -336,6 +408,12 @@ class PipelineRunner:
                 block.translation_confidence = result.confidence
                 block.status = "translated"
                 block.warnings.extend(result.warnings)
+                self.store.save_translation_memory(
+                    block.original_text,
+                    result.translated_text,
+                    provider=result.provider,
+                    model=result.model,
+                )
                 for line in block.lines:
                     line.translated_text = result.translated_text if len(block.lines) == 1 else None
                     line.translation_confidence = result.confidence
@@ -363,15 +441,7 @@ class PipelineRunner:
                     if not block.translated_text or block.translated_text == block.original_text:
                         continue
                     rect = fitz.Rect(block.bbox.to_list())
-                    font_size = _fit_font_size(block.translated_text, rect)
-                    page.insert_textbox(
-                        rect,
-                        block.translated_text,
-                        fontsize=font_size,
-                        fontname="helv",
-                        color=(0, 0, 0),
-                        align=fitz.TEXT_ALIGN_LEFT,
-                    )
+                    _insert_textbox_fit(page, rect, block.translated_text)
             doc.save(str(output), garbage=4, deflate=True)
 
     @staticmethod
@@ -407,7 +477,97 @@ class PipelineRunner:
             "blocks_total": len(blocks),
             "blocks_translated": len(translated),
             "needs_review": needs_review,
-            "ok": len(blocks) == len(translated),
+            "ok": len(blocks) == len(translated) and not needs_review,
+        }
+
+    @staticmethod
+    def _validate_structure(ir: IRDocument) -> dict:
+        issues: list[dict] = []
+        for page in ir.pages:
+            if page.width <= 0 or page.height <= 0 or not math.isfinite(page.width + page.height):
+                issues.append({"page": page.page_number, "type": "invalid_page_size"})
+            for block in page.blocks:
+                if not _bbox_inside_page(block.bbox, page.width, page.height):
+                    issues.append(
+                        {
+                            "page": page.page_number,
+                            "block_id": block.block_id,
+                            "type": "block_outside_page",
+                            "bbox": block.bbox.to_list(),
+                        }
+                    )
+                for line in block.lines:
+                    if not _bbox_inside_page(line.bbox, page.width, page.height):
+                        issues.append(
+                            {
+                                "page": page.page_number,
+                                "block_id": block.block_id,
+                                "line_id": line.line_id,
+                                "type": "line_outside_page",
+                                "bbox": line.bbox.to_list(),
+                            }
+                        )
+            for image in page.images:
+                if not _bbox_inside_page(image.bbox, page.width, page.height):
+                    issues.append(
+                        {
+                            "page": page.page_number,
+                            "image_id": image.image_id,
+                            "type": "image_outside_page",
+                            "bbox": image.bbox.to_list(),
+                        }
+                    )
+        return {
+            "document_id": ir.document_id,
+            "pages_total": len(ir.pages),
+            "issues": issues,
+            "ok": not issues,
+        }
+
+    @staticmethod
+    def _validate_visual(ir: IRDocument) -> dict:
+        issues: list[dict] = []
+        for page in ir.pages:
+            for block in page.blocks:
+                if not block.translated_text:
+                    continue
+                bbox_area = max(1.0, _bbox_area(block.bbox))
+                estimated_capacity = max(12, int(bbox_area / 18))
+                if len(block.translated_text) > estimated_capacity * 2.2:
+                    issues.append(
+                        {
+                            "page": page.page_number,
+                            "block_id": block.block_id,
+                            "type": "possible_text_overflow",
+                            "chars": len(block.translated_text),
+                            "estimated_capacity": estimated_capacity,
+                        }
+                    )
+                for image in page.images:
+                    if _bbox_intersects(block.bbox, image.bbox):
+                        issues.append(
+                            {
+                                "page": page.page_number,
+                                "block_id": block.block_id,
+                                "image_id": image.image_id,
+                                "type": "text_bbox_intersects_image",
+                            }
+                        )
+        return {
+            "document_id": ir.document_id,
+            "issues": issues,
+            "ok": not issues,
+        }
+
+    @staticmethod
+    def _make_correction_report(text_report: dict, structural_report: dict, visual_report: dict) -> dict:
+        return {
+            "ok": False,
+            "automatic_changes": [],
+            "message": "Automatic correction is conservative in this RC; flagged pages are sent to review artifacts.",
+            "text_validation": text_report,
+            "structural_validation": structural_report,
+            "visual_validation": visual_report,
         }
 
     @staticmethod
@@ -416,6 +576,8 @@ class PipelineRunner:
         job: dict,
         artifacts: dict[str, Path],
         text_report: dict,
+        structural_report: dict,
+        visual_report: dict,
         report_json: Path,
         report_html: Path,
         manifest: Path,
@@ -428,6 +590,8 @@ class PipelineRunner:
             "generated_at": now_iso(),
             "artifacts": {name: str(path) for name, path in artifacts.items()},
             "text_validation": text_report,
+            "structural_validation": structural_report,
+            "visual_validation": visual_report,
         }
         report_json.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8")
         manifest.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -436,6 +600,8 @@ class PipelineRunner:
             "<body>"
             f"<h1>Relatorio do job {html.escape(job_id)}</h1>"
             f"<p>Status textual: {'OK' if text_report.get('ok') else 'Revisar'}</p>"
+            f"<p>Status estrutural: {'OK' if structural_report.get('ok') else 'Revisar'}</p>"
+            f"<p>Status visual: {'OK' if visual_report.get('ok') else 'Revisar'}</p>"
             f"<pre>{html.escape(json.dumps(manifest_data, indent=2, ensure_ascii=False))}</pre>"
             "</body></html>",
             encoding="utf-8",
@@ -453,3 +619,49 @@ def _fit_font_size(text: str, rect) -> float:
     by_width = max(5.0, min(12.0, rect.width / max(8, chars / 1.8)))
     by_height = max(5.0, min(12.0, rect.height / 2.2))
     return min(by_width, by_height)
+
+
+def _insert_textbox_fit(page, rect, text: str) -> float:
+    import fitz
+
+    start_size = _fit_font_size(text, rect)
+    for step in range(0, 18):
+        font_size = max(4.5, start_size - (step * 0.35))
+        overflow = page.insert_textbox(
+            rect,
+            text,
+            fontsize=font_size,
+            fontname="helv",
+            color=(0, 0, 0),
+            align=fitz.TEXT_ALIGN_LEFT,
+        )
+        if overflow >= 0 or font_size <= 4.5:
+            return font_size
+    return 4.5
+
+
+def _bbox_area(bbox: BBox) -> float:
+    return max(0.0, bbox.x1 - bbox.x0) * max(0.0, bbox.y1 - bbox.y0)
+
+
+def _bbox_inside_page(bbox: BBox, width: float, height: float, *, tolerance: float = 1.0) -> bool:
+    values = [bbox.x0, bbox.y0, bbox.x1, bbox.y1, width, height]
+    if not all(math.isfinite(value) for value in values):
+        return False
+    if bbox.x1 <= bbox.x0 or bbox.y1 <= bbox.y0:
+        return False
+    return (
+        bbox.x0 >= -tolerance
+        and bbox.y0 >= -tolerance
+        and bbox.x1 <= width + tolerance
+        and bbox.y1 <= height + tolerance
+    )
+
+
+def _bbox_intersects(left: BBox, right: BBox) -> bool:
+    return not (
+        left.x1 <= right.x0
+        or right.x1 <= left.x0
+        or left.y1 <= right.y0
+        or right.y1 <= left.y0
+    )

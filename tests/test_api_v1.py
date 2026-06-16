@@ -54,6 +54,25 @@ class ApiV1Tests(unittest.TestCase):
             self.assertEqual(health.status_code, 200)
             self.assertEqual(anonymous.status_code, 401)
             self.assertEqual(authenticated.status_code, 200)
+            self.assertIn("Dashboard", authenticated.text)
+
+    def test_glossary_api_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}")
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            created = client.post(
+                "/api/v1/glossaries",
+                json={"source_term": "Armor Class", "target_term": "Classe de Armadura", "notes": "D&D"},
+            )
+            listed = client.get("/api/v1/glossaries")
+
+            self.assertEqual(created.status_code, 200)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(listed.json()["terms"][0]["target_term"], "Classe de Armadura")
 
 
 if __name__ == "__main__":
