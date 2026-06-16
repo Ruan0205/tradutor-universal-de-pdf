@@ -1,0 +1,123 @@
+name: tradutor-universal-pdf
+
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: production
+      APP_PORT: 8050
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen3.5:9b
+      LLM_BASE_URL: http://ollama:11434
+    ports:
+      - "8050:8050"
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8050/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: celery -A translator.worker.celery_app worker --loglevel=INFO --concurrency=1
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen3.5:9b
+      LLM_BASE_URL: http://ollama:11434
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  watcher:
+    build: .
+    command: python -m translator.watcher --interval 15
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: celery -A translator.worker.celery_app beat --loglevel=INFO
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - translator-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16.6-bookworm
+    environment:
+      POSTGRES_USER: translator
+      POSTGRES_PASSWORD: translator
+      POSTGRES_DB: translator
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U translator -d translator"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4.2-bookworm
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:0.5.7
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  translator-data:
+  postgres-data:
+  redis-data:
+  ollama-data:

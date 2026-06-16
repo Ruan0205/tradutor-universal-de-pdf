@@ -1,0 +1,9 @@
+services:
+  ollama:
+    profiles: ["gpu"]
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+  worker:
+    profiles: ["gpu"]
+    environment:
+      LLM_PROVIDER: ollama

@@ -4,6 +4,8 @@
 
 > Pipeline completo de tradução com dashboard web, validação automática, preservação de layout, fontes e cores originais.
 
+> Nota v3.0.0-rc.1: uma nova camada de produção foi adicionada em paralelo ao fluxo Windows legado. Ela inclui API FastAPI versionada, fila persistente, worker, watcher, CLI, Docker Compose, Document IR, providers e testes. O fluxo legado continua preservado enquanto a migração é validada.
+
 ---
 
 ## 🖥️ Preview
@@ -106,6 +108,35 @@
 ---
 
 ## 🚀 Como Instalar e Usar
+
+### 🧪 Nova camada de produção (v3.0.0-rc.1)
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+python -m translator submit tests/fixtures/generated/digital-simple.pdf --run
+```
+
+API local:
+
+```bash
+uvicorn translator.api:app --host 0.0.0.0 --port 8050
+```
+
+Docker Compose:
+
+```bash
+cp .env.example .env
+docker compose -f compose.yaml -f compose.cpu.yaml up -d --build
+```
+
+Endpoints principais:
+
+- `GET /api/v1/health`
+- `GET /api/v1/jobs`
+- `POST /api/v1/jobs`
+- `GET /api/v1/jobs/{job_id}/stages`
+- `GET /api/v1/jobs/{job_id}/artifacts`
 
 ### ✅ Instalação recomendada (Windows)
 
