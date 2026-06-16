@@ -41,6 +41,8 @@ class Settings:
     llm_temperature: float = 0.2
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 3
+    llm_max_output_tokens: Optional[int] = None
+    llm_reasoning_mode: str = "off"
     ocr_provider: str = "auto"
     google_integration_enabled: bool = False
     max_concurrent_books: int = 1
@@ -111,6 +113,12 @@ def load_settings() -> Settings:
         llm_temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2") or 0.2),
         llm_timeout_seconds=_int_env("LLM_TIMEOUT_SECONDS", 300),
         llm_max_retries=_int_env("LLM_MAX_RETRIES", 3),
+        llm_max_output_tokens=(
+            _int_env("LLM_MAX_OUTPUT_TOKENS", 0)
+            if os.environ.get("LLM_MAX_OUTPUT_TOKENS", "").strip()
+            else None
+        ),
+        llm_reasoning_mode=os.environ.get("LLM_REASONING_MODE", "off").strip().lower() or "off",
         ocr_provider=os.environ.get("OCR_PROVIDER", "auto"),
         google_integration_enabled=_bool_env("GOOGLE_INTEGRATION_ENABLED", False),
         max_concurrent_books=_int_env("MAX_CONCURRENT_BOOKS", 1),

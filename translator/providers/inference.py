@@ -56,12 +56,24 @@ class MockProvider:
 class OllamaProvider:
     name = "ollama"
 
-    def __init__(self, base_url: str, model: str, *, temperature: float = 0.2, timeout: int = 300, retries: int = 3):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        *,
+        temperature: float = 0.2,
+        timeout: int = 300,
+        retries: int = 3,
+        reasoning_mode: str = "off",
+        max_output_tokens: int | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.temperature = temperature
         self.timeout = timeout
         self.retries = retries
+        self.reasoning_mode = reasoning_mode.strip().lower()
+        self.max_output_tokens = max_output_tokens
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
         system = (
@@ -96,16 +108,24 @@ class OllamaProvider:
             return {"ok": False, "provider": self.name, "model": self.model, "error": str(exc)}
 
     def _chat(self, system: str, user: str) -> str:
+        options: dict[str, float | int] = {"temperature": self.temperature}
+        if self.max_output_tokens:
+            options["num_predict"] = self.max_output_tokens
+        request_data: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": options,
+        }
+        if self.reasoning_mode in {"off", "false", "0", "no"}:
+            request_data["think"] = False
+        elif self.reasoning_mode in {"on", "true", "1", "yes"}:
+            request_data["think"] = True
         payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "stream": False,
-                "options": {"temperature": self.temperature},
-            }
+            request_data,
         ).encode("utf-8")
         last_error: Exception | None = None
         for attempt in range(self.retries):
@@ -186,6 +206,8 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             temperature=settings.llm_temperature,
             timeout=settings.llm_timeout_seconds,
             retries=settings.llm_max_retries,
+            reasoning_mode=settings.llm_reasoning_mode,
+            max_output_tokens=settings.llm_max_output_tokens,
         )
     if provider in {"llama.cpp", "llamacpp", "llama"}:
         return LlamaCppProvider(settings.llm_base_url, settings.llm_model, timeout=settings.llm_timeout_seconds)
