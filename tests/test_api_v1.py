@@ -33,6 +33,28 @@ class ApiV1Tests(unittest.TestCase):
             self.assertEqual(submitted.status_code, 200)
             self.assertEqual(submitted.json()["original_filename"], "api.pdf")
 
+    def test_dashboard_requires_auth_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                base_dir=root / "data",
+                database_url=f"sqlite:///{root / 'api.db'}",
+                auth_enabled=True,
+                initial_admin_user="admin",
+                initial_admin_password="secret",
+            )
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            health = client.get("/api/v1/health")
+            anonymous = client.get("/")
+            authenticated = client.get("/", auth=("admin", "secret"))
+
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(anonymous.status_code, 401)
+            self.assertEqual(authenticated.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

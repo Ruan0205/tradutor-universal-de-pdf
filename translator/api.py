@@ -63,7 +63,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Tradutor Universal de PDF", version="3.0.0-rc.1")
 
     @app.get("/", response_class=HTMLResponse)
-    def index():
+    def index(_: None = Depends(require_auth)):
         return HTMLResponse(_dashboard_html())
 
     @app.get("/api/v1/health")
