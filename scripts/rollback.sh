@@ -10,10 +10,15 @@ cd "$(dirname "$0")/.."
 REF="$1"
 BACKUP="${2:-}"
 
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+compose() {
+  ${DOCKER_BIN} compose "$@"
+}
+
 git checkout "$REF"
-docker compose -f compose.yaml -f compose.cpu.yaml build
+compose -f compose.yaml -f compose.cpu.yaml build
 if [ -n "$BACKUP" ]; then
   ./scripts/restore.sh "$BACKUP"
 fi
-docker compose -f compose.yaml -f compose.cpu.yaml up -d
+compose -f compose.yaml -f compose.cpu.yaml up -d
 ./scripts/healthcheck.sh

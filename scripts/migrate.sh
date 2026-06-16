@@ -2,7 +2,13 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-docker compose run --rm api python - <<'PY'
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+compose() {
+  ${DOCKER_BIN} compose "$@"
+}
+
+compose run --rm api python - <<'PY'
 from translator.settings import load_settings
 from translator.store import init_store
 
