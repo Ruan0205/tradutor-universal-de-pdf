@@ -380,6 +380,7 @@ def create_app() -> FastAPI:
     async def legacy_queue_next(
         request: Request,
         _: None = Depends(require_auth),
+        settings: Settings = Depends(get_settings),
         store: JobStore = Depends(get_store),
     ):
         data = await request.json()
@@ -389,7 +390,16 @@ def create_app() -> FastAPI:
         queued = [job for job in store.list_jobs(limit=1000) if job["status"] == JobStatus.QUEUED.value]
         target = next((job for job in queued if job["original_filename"] == filename or job["id"] == filename), None)
         if not target:
-            raise HTTPException(status_code=404, detail="Queued book not found")
+            source = _find_source_pdf(settings, filename)
+            if not source:
+                raise HTTPException(status_code=404, detail="Book not found")
+            target = store.submit_pdf(
+                source,
+                priority=0,
+                metadata={"submitted_by": "dashboard", "queued_from_books_tab": True},
+                reuse_existing=False,
+            )
+            queued.append(target)
         max_priority = max([int(job.get("priority") or 0) for job in queued] or [0])
         updated = store.update_job(target["id"], priority=max_priority + 100)
         return {"ok": True, "job": updated}
@@ -412,7 +422,15 @@ def create_app() -> FastAPI:
         for index, name in enumerate(order):
             job = by_name.get(name)
             if not job:
-                continue
+                source = _find_source_pdf(settings, name)
+                if not source:
+                    continue
+                job = store.submit_pdf(
+                    source,
+                    priority=0,
+                    metadata={"submitted_by": "dashboard", "queued_from_books_tab": True},
+                    reuse_existing=False,
+                )
             updated.append(store.update_job(job["id"], priority=base - index))
         config = _legacy_load_config(settings)
         config["sort_order"] = "custom"
@@ -678,6 +696,15 @@ def _legacy_untranslated_books(settings: Settings, jobs: list[dict]) -> list[dic
     for item in input_items:
         item["queued"] = False
     return items + input_items
+
+
+def _find_source_pdf(settings: Settings, filename: str) -> Path | None:
+    name = Path(filename).name
+    for directory in (settings.input_dir, settings.originals_dir):
+        path = directory / name
+        if path.exists() and path.is_file() and path.suffix.lower() == ".pdf":
+            return path
+    return None
 
 
 def _legacy_ollama_status(settings: Settings) -> dict:

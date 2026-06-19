@@ -105,8 +105,10 @@ class ApiV1Tests(unittest.TestCase):
             settings.ensure_dirs()
             first = settings.input_dir / "first.pdf"
             second = settings.input_dir / "second.pdf"
+            third = settings.input_dir / "third.pdf"
             make_pdf(first)
             make_pdf(second)
+            make_pdf(third)
             store = init_store(settings.database_url)
             store.submit_pdf(first)
             store.submit_pdf(second)
@@ -118,12 +120,16 @@ class ApiV1Tests(unittest.TestCase):
             status_after_next = client.get("/api/status").json()
             order_response = client.post("/api/queue/order", json={"order": ["first.pdf", "second.pdf"]})
             status_after_order = client.get("/api/status").json()
+            unqueued_next_response = client.post("/api/queue/next", json={"filename": "third.pdf"})
+            status_after_unqueued_next = client.get("/api/status").json()
 
             self.assertEqual(next_response.status_code, 200)
             self.assertEqual(status_after_next["books"]["input"][0]["name"], "second.pdf")
             self.assertEqual(order_response.status_code, 200)
             self.assertEqual([item["name"] for item in status_after_order["books"]["input"][:2]], ["first.pdf", "second.pdf"])
-            self.assertEqual(status_after_order["books"]["counts"]["untranslated"], 2)
+            self.assertEqual(unqueued_next_response.status_code, 200)
+            self.assertEqual(status_after_unqueued_next["books"]["input"][0]["name"], "third.pdf")
+            self.assertEqual(status_after_order["books"]["counts"]["untranslated"], 3)
 
 
 if __name__ == "__main__":
