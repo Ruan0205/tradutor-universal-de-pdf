@@ -218,32 +218,44 @@ class OllamaProvider:
 class OpenAICompatibleProvider:
     name = "openai-compatible"
 
-    def __init__(self, base_url: str, model: str, api_key: str | None = None, *, timeout: int = 300):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str | None = None,
+        *,
+        timeout: int = 300,
+        temperature: float = 0.2,
+        max_output_tokens: int | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
+        self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
         glossary_text = ""
         if request.glossary_terms:
             glossary_text = "\nGlossary: " + json.dumps(list(request.glossary_terms), ensure_ascii=False)
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Translate to Brazilian Portuguese and return only the translated text. "
-                            "Preserve RPG proper nouns, table structure, numbers, and dice notation."
-                        ),
-                    },
-                    {"role": "user", "content": request.text + glossary_text},
-                ],
-                "temperature": 0.2,
-            }
-        ).encode("utf-8")
+        request_data: dict[str, object] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate to Brazilian Portuguese and return only the translated text. "
+                        "Preserve RPG proper nouns, table structure, numbers, and dice notation."
+                    ),
+                },
+                {"role": "user", "content": request.text + glossary_text},
+            ],
+            "temperature": self.temperature,
+        }
+        if self.max_output_tokens:
+            request_data["max_tokens"] = self.max_output_tokens
+        payload = json.dumps(request_data).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -333,6 +345,8 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             settings.llm_model,
             api_key=settings.api_key(),
             timeout=settings.llm_timeout_seconds,
+            temperature=settings.llm_temperature,
+            max_output_tokens=settings.llm_max_output_tokens,
         )
     if provider in {"openai-compatible", "openai"}:
         return OpenAICompatibleProvider(
@@ -340,5 +354,7 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             settings.llm_model,
             api_key=settings.api_key(),
             timeout=settings.llm_timeout_seconds,
+            temperature=settings.llm_temperature,
+            max_output_tokens=settings.llm_max_output_tokens,
         )
     return MockProvider(settings.llm_model if provider == "mock" else "mock-translation")

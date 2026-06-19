@@ -169,7 +169,13 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.translated_text, "O dragao ataca.")
 
     def test_openai_compatible_provider_uses_bearer_key_and_existing_v1_url(self):
-        provider = OpenAICompatibleProvider("http://router:3005/llm/v1", "minimax-m3", api_key="proxy-key")
+        provider = OpenAICompatibleProvider(
+            "http://router:3005/llm/v1",
+            "minimax-m3",
+            api_key="proxy-key",
+            temperature=0.1,
+            max_output_tokens=4096,
+        )
         seen = {}
 
         def fake_urlopen(request, timeout):
@@ -206,6 +212,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(seen["url"], "http://router:3005/llm/v1/chat/completions")
         self.assertEqual(seen["authorization"], "Bearer proxy-key")
         self.assertEqual(seen["payload"]["model"], "minimax-m3")
+        self.assertEqual(seen["payload"]["temperature"], 0.1)
+        self.assertEqual(seen["payload"]["max_tokens"], 4096)
         self.assertEqual(result.translated_text, "O dragao ataca.")
         self.assertEqual(result.total_tokens, 15)
 
