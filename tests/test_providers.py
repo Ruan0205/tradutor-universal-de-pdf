@@ -5,7 +5,7 @@ import unittest
 
 from PIL import Image
 
-from translator.providers import GoogleTranslateImagesProvider, MockProvider, OllamaProvider, TranslationRequest
+from translator.providers import GoogleTranslateImagesProvider, MockProvider, OllamaProvider, OpenAICompatibleProvider, TranslationRequest
 
 
 class FakeGoogleTranslateImagesProvider(GoogleTranslateImagesProvider):
@@ -167,6 +167,47 @@ class ProviderTests(unittest.TestCase):
             inference.urllib.request.urlopen = original
 
         self.assertEqual(result.translated_text, "O dragao ataca.")
+
+    def test_openai_compatible_provider_uses_bearer_key_and_existing_v1_url(self):
+        provider = OpenAICompatibleProvider("http://router:3005/llm/v1", "minimax-m3", api_key="proxy-key")
+        seen = {}
+
+        def fake_urlopen(request, timeout):
+            seen["url"] = request.full_url
+            seen["authorization"] = request.headers.get("Authorization")
+            seen["payload"] = json.loads(request.data.decode("utf-8"))
+
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps(
+                        {
+                            "choices": [{"message": {"content": "O dragao ataca."}}],
+                            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                        }
+                    ).encode("utf-8")
+
+            return Response()
+
+        import translator.providers.inference as inference
+
+        original = inference.urllib.request.urlopen
+        try:
+            inference.urllib.request.urlopen = fake_urlopen
+            result = provider.translate(TranslationRequest(block_id="b1", text="The dragon attacks."))
+        finally:
+            inference.urllib.request.urlopen = original
+
+        self.assertEqual(seen["url"], "http://router:3005/llm/v1/chat/completions")
+        self.assertEqual(seen["authorization"], "Bearer proxy-key")
+        self.assertEqual(seen["payload"]["model"], "minimax-m3")
+        self.assertEqual(result.translated_text, "O dragao ataca.")
+        self.assertEqual(result.total_tokens, 15)
 
 
 if __name__ == "__main__":

@@ -247,7 +247,7 @@ class OpenAICompatibleProvider:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(f"{self.base_url}/v1/chat/completions", data=payload, headers=headers)
+        req = urllib.request.Request(self._chat_completions_url(), data=payload, headers=headers)
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             data = json.loads(response.read())
         translated = data["choices"][0]["message"]["content"].strip()
@@ -271,6 +271,11 @@ class OpenAICompatibleProvider:
 
     def health(self) -> dict:
         return {"ok": True, "provider": self.name, "model": self.model}
+
+    def _chat_completions_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/chat/completions"
+        return f"{self.base_url}/v1/chat/completions"
 
 
 class LlamaCppProvider(OpenAICompatibleProvider):
@@ -323,7 +328,17 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             keep_alive=settings.llm_keep_alive,
         )
     if provider in {"llama.cpp", "llamacpp", "llama"}:
-        return LlamaCppProvider(settings.llm_base_url, settings.llm_model, timeout=settings.llm_timeout_seconds)
+        return LlamaCppProvider(
+            settings.llm_base_url,
+            settings.llm_model,
+            api_key=settings.api_key(),
+            timeout=settings.llm_timeout_seconds,
+        )
     if provider in {"openai-compatible", "openai"}:
-        return OpenAICompatibleProvider(settings.llm_base_url, settings.llm_model, timeout=settings.llm_timeout_seconds)
+        return OpenAICompatibleProvider(
+            settings.llm_base_url,
+            settings.llm_model,
+            api_key=settings.api_key(),
+            timeout=settings.llm_timeout_seconds,
+        )
     return MockProvider(settings.llm_model if provider == "mock" else "mock-translation")

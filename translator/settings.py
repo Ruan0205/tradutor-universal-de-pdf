@@ -40,6 +40,8 @@ class Settings:
     llm_provider: str = "mock"
     llm_model: str = "qwen3.5:9b"
     llm_base_url: str = "http://localhost:11434"
+    llm_api_key: Optional[str] = None
+    llm_api_key_file: Optional[Path] = None
     llm_temperature: float = 0.2
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 3
@@ -101,10 +103,18 @@ class Settings:
             return self.initial_admin_password_file.read_text(encoding="utf-8").strip()
         return None
 
+    def api_key(self) -> Optional[str]:
+        if self.llm_api_key:
+            return self.llm_api_key
+        if self.llm_api_key_file and self.llm_api_key_file.exists():
+            return self.llm_api_key_file.read_text(encoding="utf-8").strip()
+        return None
+
 
 def load_settings() -> Settings:
     base_dir = Path(os.environ.get("BASE_DIR", "data"))
     password_file = os.environ.get("INITIAL_ADMIN_PASSWORD_FILE")
+    llm_api_key_file = os.environ.get("LLM_API_KEY_FILE")
     settings = Settings(
         app_env=os.environ.get("APP_ENV", "development"),
         host=os.environ.get("APP_HOST", "0.0.0.0"),
@@ -119,6 +129,8 @@ def load_settings() -> Settings:
         llm_provider=os.environ.get("LLM_PROVIDER", "mock"),
         llm_model=os.environ.get("LLM_MODEL", "qwen3.5:9b"),
         llm_base_url=os.environ.get("LLM_BASE_URL", "http://localhost:11434"),
+        llm_api_key=os.environ.get("LLM_API_KEY"),
+        llm_api_key_file=Path(llm_api_key_file) if llm_api_key_file else None,
         llm_temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2") or 0.2),
         llm_timeout_seconds=_int_env("LLM_TIMEOUT_SECONDS", 300),
         llm_max_retries=_int_env("LLM_MAX_RETRIES", 3),

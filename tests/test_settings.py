@@ -60,6 +60,27 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(settings.llm_temperature, 0.1)
             self.assertEqual(settings.image_text_mode, "google_translate_images")
 
+    def test_llm_api_key_can_be_loaded_from_file(self):
+        old_file = os.environ.get("LLM_API_KEY_FILE")
+        old_key = os.environ.get("LLM_API_KEY")
+        with tempfile.TemporaryDirectory() as tmp:
+            key_file = Path(tmp) / "key"
+            key_file.write_text("secret-token\n", encoding="utf-8")
+            try:
+                os.environ.pop("LLM_API_KEY", None)
+                os.environ["LLM_API_KEY_FILE"] = str(key_file)
+                settings = load_settings()
+                self.assertEqual(settings.api_key(), "secret-token")
+            finally:
+                if old_file is None:
+                    os.environ.pop("LLM_API_KEY_FILE", None)
+                else:
+                    os.environ["LLM_API_KEY_FILE"] = old_file
+                if old_key is None:
+                    os.environ.pop("LLM_API_KEY", None)
+                else:
+                    os.environ["LLM_API_KEY"] = old_key
+
 
 if __name__ == "__main__":
     unittest.main()
