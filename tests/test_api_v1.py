@@ -74,6 +74,29 @@ class ApiV1Tests(unittest.TestCase):
             self.assertEqual(listed.status_code, 200)
             self.assertEqual(listed.json()["terms"][0]["target_term"], "Classe de Armadura")
 
+    def test_legacy_status_lists_only_final_translated_pdfs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}")
+            settings.ensure_dirs()
+            for name in [
+                "book.traduzido.pdf",
+                "book.revisao.pdf",
+                "book.comparacao.pdf",
+                "book.pesquisavel.pdf",
+            ]:
+                make_pdf(settings.output_dir / name)
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            response = client.get("/api/status")
+
+            self.assertEqual(response.status_code, 200)
+            translated = response.json()["books"]["translated"]
+            self.assertEqual([item["name"] for item in translated], ["book.traduzido.pdf"])
+            self.assertEqual(response.json()["books"]["counts"]["translated"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,7 +52,7 @@ class MockProvider:
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
         text = request.text.strip()
-        translated = text if not text else f"[pt-BR] {text}"
+        translated = text if not text else f"Texto traduzido para portugues brasileiro do bloco {request.block_id}."
         prompt_tokens = _estimate_tokens(request.text)
         completion_tokens = _estimate_tokens(translated)
         return TranslationResult(
@@ -123,7 +123,9 @@ class OllamaProvider:
         )
         response_text, usage = self._chat(system, user)
         parsed = _extract_json(response_text)
-        translated = str(parsed.get("translated_text") or request.text)
+        if "translated_text" not in parsed or not str(parsed.get("translated_text") or "").strip():
+            raise RuntimeError("Ollama response did not include translated_text")
+        translated = str(parsed["translated_text"]).strip()
         confidence = float(parsed.get("confidence") or 0.75)
         warnings = [str(item) for item in parsed.get("warnings", [])]
         prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(system + user))

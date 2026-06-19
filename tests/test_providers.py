@@ -11,7 +11,8 @@ class ProviderTests(unittest.TestCase):
 
         self.assertEqual(result.block_id, "b1")
         self.assertEqual(result.provider, "mock")
-        self.assertIn("The spell deals damage.", result.translated_text)
+        self.assertIn("portugues brasileiro", result.translated_text)
+        self.assertNotIn("The spell deals damage.", result.translated_text)
         self.assertEqual(result.confidence, 1.0)
 
     def test_ollama_provider_disables_reasoning_and_limits_output(self):
@@ -78,6 +79,32 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(result.completion_tokens, 8)
         self.assertEqual(result.total_tokens, 20)
         self.assertEqual(result.tokens_per_second, 4.0)
+
+    def test_ollama_provider_rejects_missing_translated_text(self):
+        provider = OllamaProvider("http://localhost:11434", "qwen3.5:9b")
+
+        def fake_urlopen(request, timeout):
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps({"message": {"content": json.dumps({"block_id": "b1"})}}).encode("utf-8")
+
+            return Response()
+
+        import translator.providers.inference as inference
+
+        original = inference.urllib.request.urlopen
+        try:
+            inference.urllib.request.urlopen = fake_urlopen
+            with self.assertRaises(RuntimeError):
+                provider.translate(TranslationRequest(block_id="b1", text="The wizard casts a spell."))
+        finally:
+            inference.urllib.request.urlopen = original
 
 
 if __name__ == "__main__":

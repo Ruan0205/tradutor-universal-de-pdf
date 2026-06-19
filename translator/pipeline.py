@@ -124,7 +124,7 @@ class PipelineRunner:
             )
 
             with self.stage(job_id, "pdf_generation"):
-                translated_pdf = self.settings.output_dir / f"{source.stem}.traduzido.pdf"
+                translated_pdf = job_dir / f"{source.stem}.traduzido.pdf"
                 self._compose_translated_pdf(source, translated_ir, translated_pdf)
                 artifacts["translated_pdf"] = translated_pdf
                 self.store.add_artifact(job_id, "translated_pdf", translated_pdf)
@@ -198,27 +198,32 @@ class PipelineRunner:
                 artifacts["manifest"] = manifest
                 self.store.update_job(job_id, progress=88.0)
 
+            if needs_human_review:
+                self.store.set_stage_skipped(job_id, "publication", reason="Validation failed; output was not published.")
+                self.store.set_stage_skipped(job_id, "output_sync", reason="Validation failed; output was not published.")
+                final_job = self.store.update_job(
+                    job_id,
+                    status=JobStatus.NEEDS_REVIEW.value,
+                    current_stage="needs_review",
+                    progress=100.0,
+                    metadata={
+                        **(self.store.get_job(job_id) or job).get("metadata", {}),
+                        "finished_at": now_iso(),
+                        "publication_blocked": True,
+                    },
+                )
+                return final_job
+
             with self.stage(job_id, "publication"):
                 originals_target = self.settings.originals_dir / source.name
                 if source.resolve() != originals_target.resolve():
                     shutil.copy2(source, originals_target)
                 self.store.add_artifact(job_id, "original_pdf", originals_target)
+                final_translated_pdf = self.settings.output_dir / f"{source.stem}.traduzido.pdf"
+                shutil.copy2(artifacts["translated_pdf"], final_translated_pdf)
+                artifacts["published_translated_pdf"] = final_translated_pdf
+                self.store.add_artifact(job_id, "published_translated_pdf", final_translated_pdf)
 
-                searchable = self.settings.output_dir / f"{source.stem}.pesquisavel.pdf"
-                original_searchable = self.settings.output_dir / f"{source.stem}.original-pesquisavel.pdf"
-                review_pdf = self.settings.output_dir / f"{source.stem}.revisao.pdf"
-                comparison_pdf = self.settings.output_dir / f"{source.stem}.comparacao.pdf"
-                shutil.copy2(artifacts["translated_pdf"], searchable)
-                shutil.copy2(originals_target, original_searchable)
-                shutil.copy2(artifacts["translated_pdf"], review_pdf)
-                self._create_comparison_pdf(originals_target, artifacts["translated_pdf"], comparison_pdf)
-                for kind, path in [
-                    ("searchable_pdf", searchable),
-                    ("original_searchable_pdf", original_searchable),
-                    ("review_pdf", review_pdf),
-                    ("comparison_pdf", comparison_pdf),
-                ]:
-                    self.store.add_artifact(job_id, kind, path)
                 self.store.update_job(job_id, progress=96.0)
 
             with self.stage(job_id, "output_sync"):
@@ -228,7 +233,7 @@ class PipelineRunner:
 
             final_job = self.store.update_job(
                 job_id,
-                status=JobStatus.NEEDS_REVIEW.value if needs_human_review else JobStatus.COMPLETED.value,
+                status=JobStatus.COMPLETED.value,
                 current_stage="completed",
                 progress=100.0,
                 metadata={
@@ -310,6 +315,8 @@ class PipelineRunner:
                 blocks: list[IRBlock] = []
                 images: list[IRImage] = []
                 page_dict = page.get_text("dict")
+                if not _page_dict_has_text(page_dict):
+                    page_dict = _page_dict_with_ocr(page)
                 for block_index, block in enumerate(page_dict.get("blocks", []), start=1):
                     bbox = BBox.from_any(block.get("bbox", [0, 0, 0, 0]))
                     if block.get("type") == 1:
@@ -513,17 +520,48 @@ class PipelineRunner:
     def _validate_text(ir: IRDocument) -> dict:
         blocks = [block for page in ir.pages for block in page.blocks if block.original_text.strip()]
         translated = [block for block in blocks if block.translated_text]
+        untranslated = [
+            block.block_id
+            for block in translated
+            if _translation_is_unchanged(block.original_text, block.translated_text or "")
+        ]
+        empty_pages = [
+            page.page_number
+            for page in ir.pages
+            if any(kind in page.classification for kind in {"digital", "scanned", "hybrid"})
+            and not any(block.original_text.strip() for block in page.blocks)
+        ]
         needs_review = [
             block.block_id
             for block in translated
             if block.translation_confidence is not None and block.translation_confidence < 0.65
         ]
+        issues: list[dict] = []
+        if not blocks:
+            issues.append({"type": "no_text_blocks", "message": "No selectable or OCR text was extracted."})
+        if empty_pages:
+            issues.append({"type": "pages_without_text_blocks", "pages": empty_pages[:25], "count": len(empty_pages)})
+        if untranslated:
+            issues.append({"type": "unchanged_translations", "blocks": untranslated[:50], "count": len(untranslated)})
+        if len(blocks) != len(translated):
+            issues.append(
+                {
+                    "type": "missing_translations",
+                    "blocks_total": len(blocks),
+                    "blocks_translated": len(translated),
+                }
+            )
+        if needs_review:
+            issues.append({"type": "low_confidence", "blocks": needs_review[:50], "count": len(needs_review)})
         return {
             "document_id": ir.document_id,
             "blocks_total": len(blocks),
             "blocks_translated": len(translated),
+            "unchanged_blocks": len(untranslated),
+            "pages_without_text_blocks": len(empty_pages),
+            "issues": issues,
             "needs_review": needs_review,
-            "ok": len(blocks) == len(translated) and not needs_review,
+            "ok": not issues,
         }
 
     @staticmethod
@@ -658,6 +696,104 @@ def _color_to_rgb(value) -> list[int] | None:
     if not isinstance(value, int):
         return None
     return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+
+
+def _page_dict_has_text(page_dict: dict) -> bool:
+    for block in page_dict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if str(span.get("text") or "").strip():
+                    return True
+    return False
+
+
+def _page_dict_with_ocr(page) -> dict:
+    try:
+        textpage = page.get_textpage_ocr(language="eng", dpi=200, full=True)
+        page_dict = page.get_text("dict", textpage=textpage)
+    except Exception:
+        return page.get_text("dict")
+    return page_dict if _page_dict_has_text(page_dict) else page.get_text("dict")
+
+
+def _translation_is_unchanged(source: str, translated: str) -> bool:
+    source_norm = _normalized_language_text(source)
+    translated_norm = _normalized_language_text(translated)
+    if not source_norm or not translated_norm:
+        return False
+    if source_norm == translated_norm and _has_meaningful_alpha_text(source_norm):
+        return True
+    source_words = set(source_norm.split())
+    translated_words = set(translated_norm.split())
+    if len(source_words) < 4:
+        return False
+    overlap = len(source_words & translated_words) / max(1, len(source_words))
+    return overlap >= 0.92 and _looks_english(source_norm) and not _looks_portuguese(translated_norm)
+
+
+def _normalized_language_text(text: str) -> str:
+    import re
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFKD", text or "")
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _has_meaningful_alpha_text(text: str) -> bool:
+    letters = [ch for ch in text if ch.isalpha()]
+    return len(letters) >= 12
+
+
+def _looks_english(text: str) -> bool:
+    markers = {
+        "the",
+        "and",
+        "you",
+        "your",
+        "that",
+        "with",
+        "from",
+        "spell",
+        "damage",
+        "level",
+        "class",
+        "weapon",
+        "creature",
+        "attack",
+        "saving",
+        "throws",
+    }
+    words = set(text.split())
+    return len(words & markers) >= 2
+
+
+def _looks_portuguese(text: str) -> bool:
+    markers = {
+        "de",
+        "da",
+        "do",
+        "que",
+        "para",
+        "com",
+        "uma",
+        "um",
+        "voce",
+        "dano",
+        "magia",
+        "nivel",
+        "classe",
+        "arma",
+        "criatura",
+        "ataque",
+        "resistencia",
+    }
+    words = set(text.split())
+    return len(words & markers) >= 2
 
 
 def _fit_font_size(text: str, rect) -> float:

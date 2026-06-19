@@ -567,7 +567,7 @@ def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:
                 "timing": _book_timing(jobs_by_source.get(_source_stem_from_output(item["name"]))),
                 "tokens": _book_tokens(jobs_by_source.get(_source_stem_from_output(item["name"]))),
             }
-            for item in _list_pdfs(settings.output_dir, sort_mode="mtime_desc")
+            for item in _list_pdfs(settings.output_dir, sort_mode="mtime_desc", suffix=".traduzido.pdf")
         ],
         "originals": _list_pdfs(settings.originals_dir),
         "validations": validations,
@@ -575,7 +575,7 @@ def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:
         "counts": {
             "input": len(_list_pdfs(settings.input_dir)),
             "translating": 0,
-            "translated": len(_list_pdfs(settings.output_dir)),
+            "translated": len(_list_pdfs(settings.output_dir, suffix=".traduzido.pdf")),
             "originals": len(_list_pdfs(settings.originals_dir)),
         },
     }
@@ -617,13 +617,15 @@ def _legacy_validations(settings: Settings) -> dict:
 
 def _legacy_validation_for(settings: Settings, filename: str) -> dict:
     validations = _legacy_validations(settings)
-    result = validations.get(filename, {"result": "PASS", "rate": 100})
+    result = validations.get(filename, {"result": "FAIL", "rate": 0})
     return {"overall_pass": result["result"] == "PASS", "pass_rate": result["rate"] / 100}
 
 
-def _list_pdfs(directory: Path, *, sort_mode: str = "name_asc") -> list[dict]:
+def _list_pdfs(directory: Path, *, sort_mode: str = "name_asc", suffix: str | None = None) -> list[dict]:
     directory.mkdir(parents=True, exist_ok=True)
     files = [path for path in directory.glob("*.pdf") if path.is_file()]
+    if suffix:
+        files = [path for path in files if path.name.endswith(suffix)]
     if sort_mode == "mtime_desc":
         files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     else:

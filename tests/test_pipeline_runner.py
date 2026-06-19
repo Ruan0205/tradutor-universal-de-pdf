@@ -4,6 +4,7 @@ import unittest
 
 from reportlab.pdfgen import canvas
 
+from engine.document_ir import BBox, IRBlock, IRDocument, IRPage
 from translator.pipeline import PipelineRunner
 from translator.providers import MockProvider
 from translator.settings import Settings
@@ -43,6 +44,60 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertIn("visual_validation", kinds)
             self.assertIn("manifest", kinds)
             self.assertTrue((settings.output_dir / "book.traduzido.pdf").exists())
+            self.assertEqual([path.name for path in settings.output_dir.glob("*.pdf")], ["book.traduzido.pdf"])
+
+    def test_text_validation_rejects_document_without_blocks(self):
+        ir = IRDocument(
+            document_id="empty",
+            source_path="empty.pdf",
+            checksum="abc",
+            pages=[
+                IRPage(
+                    page_id="page-1",
+                    page_number=1,
+                    width=100,
+                    height=100,
+                    classification=["scanned"],
+                    blocks=[],
+                )
+            ],
+        )
+
+        report = PipelineRunner._validate_text(ir)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["blocks_total"], 0)
+        self.assertEqual(report["issues"][0]["type"], "no_text_blocks")
+
+    def test_text_validation_rejects_unchanged_translation(self):
+        ir = IRDocument(
+            document_id="unchanged",
+            source_path="book.pdf",
+            checksum="abc",
+            pages=[
+                IRPage(
+                    page_id="page-1",
+                    page_number=1,
+                    width=100,
+                    height=100,
+                    classification=["digital"],
+                    blocks=[
+                        IRBlock(
+                            block_id="b1",
+                            type="paragraph",
+                            bbox=BBox(1, 1, 90, 20),
+                            original_text="The spell deals fire damage to the creature.",
+                            translated_text="The spell deals fire damage to the creature.",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        report = PipelineRunner._validate_text(ir)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["unchanged_blocks"], 1)
 
 
 if __name__ == "__main__":
