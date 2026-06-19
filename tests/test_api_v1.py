@@ -155,6 +155,28 @@ class ApiV1Tests(unittest.TestCase):
             self.assertIsNone(refreshed["error"])
             self.assertEqual(response.json()["restarted"][0]["name"], "restart-me.pdf")
 
+    def test_legacy_start_refuses_unavailable_ollama_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                base_dir=root / "data",
+                database_url=f"sqlite:///{root / 'api.db'}",
+                job_dispatcher="manual",
+                llm_provider="ollama",
+                llm_model="missing-model",
+                llm_base_url="http://127.0.0.1:9",
+            )
+            settings.ensure_dirs()
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            response = client.post("/api/start")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["ok"])
+            self.assertIn("Ollama", response.json()["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

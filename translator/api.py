@@ -272,6 +272,17 @@ def create_app() -> FastAPI:
 
     @app.post("/api/start")
     def legacy_start(_: None = Depends(require_auth), settings: Settings = Depends(get_settings), store: JobStore = Depends(get_store)):
+        provider_ready = _translation_provider_ready(settings)
+        if not provider_ready["ok"]:
+            return {
+                "ok": False,
+                "submitted": [],
+                "restarted": [],
+                "dispatched": [],
+                "error": provider_ready["error"],
+                "provider": provider_ready,
+            }
+
         submitted = []
         restarted = []
         dispatched = []
@@ -800,6 +811,34 @@ def _legacy_ollama_status(settings: Settings) -> dict:
         return {"connected": True, "models": models, "url": settings.llm_base_url}
     except Exception as exc:
         return {"connected": False, "models": [], "url": settings.llm_base_url, "error": str(exc)}
+
+
+def _translation_provider_ready(settings: Settings) -> dict:
+    if settings.llm_provider.strip().lower() != "ollama":
+        return {"ok": True, "provider": settings.llm_provider, "model": settings.llm_model}
+    try:
+        with urllib.request.urlopen(f"{settings.llm_base_url.rstrip('/')}/api/tags", timeout=5) as response:
+            data = json.loads(response.read())
+    except Exception as exc:
+        return {
+            "ok": False,
+            "provider": "ollama",
+            "model": settings.llm_model,
+            "error": f"Ollama não está acessível em {settings.llm_base_url}: {exc}",
+        }
+    models = sorted({item.get("name") or item.get("model") for item in data.get("models", []) if item})
+    if settings.llm_model not in models:
+        return {
+            "ok": False,
+            "provider": "ollama",
+            "model": settings.llm_model,
+            "models": models,
+            "error": (
+                f"Modelo configurado '{settings.llm_model}' não está disponível no Ollama. "
+                f"Modelos disponíveis: {', '.join(models) or 'nenhum'}."
+            ),
+        }
+    return {"ok": True, "provider": "ollama", "model": settings.llm_model, "models": models}
 
 
 def _legacy_validations(settings: Settings) -> dict:
