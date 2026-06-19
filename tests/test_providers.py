@@ -216,6 +216,8 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(seen["payload"]["max_tokens"], 4096)
         self.assertEqual(result.translated_text, "O dragao ataca.")
         self.assertEqual(result.total_tokens, 15)
+        self.assertGreater(result.duration_seconds, 0)
+        self.assertGreater(result.tokens_per_second, 0)
 
 
 if __name__ == "__main__":

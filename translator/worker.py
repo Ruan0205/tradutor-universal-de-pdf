@@ -12,12 +12,7 @@ settings = load_settings()
 celery_app = Celery("translator", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.task_track_started = True
 celery_app.conf.worker_prefetch_multiplier = 1
-celery_app.conf.beat_schedule = {
-    "process-next-queued-job": {
-        "task": "translator.process_next_queued_job",
-        "schedule": 30.0,
-    }
-}
+celery_app.conf.beat_schedule = {}
 
 
 @celery_app.task(name="translator.process_job")

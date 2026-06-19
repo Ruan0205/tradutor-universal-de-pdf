@@ -260,13 +260,16 @@ class OpenAICompatibleProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         req = urllib.request.Request(self._chat_completions_url(), data=payload, headers=headers)
+        start = time.perf_counter()
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             data = json.loads(response.read())
+        duration_seconds = time.perf_counter() - start
         translated = data["choices"][0]["message"]["content"].strip()
         usage = data.get("usage", {}) or {}
         prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(request.text))
         completion_tokens = int(usage.get("completion_tokens") or _estimate_tokens(translated))
         total_tokens = int(usage.get("total_tokens") or prompt_tokens + completion_tokens)
+        tokens_per_second = round(completion_tokens / duration_seconds, 2) if duration_seconds > 0 else 0.0
         return TranslationResult(
             request.block_id,
             translated,
@@ -277,8 +280,8 @@ class OpenAICompatibleProvider:
             prompt_tokens,
             completion_tokens,
             total_tokens,
-            0.0,
-            0.0,
+            duration_seconds,
+            tokens_per_second,
         )
 
     def health(self) -> dict:
