@@ -1,0 +1,24 @@
+services:
+  api:
+    ports:
+      - "8050:8050"
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/data:/data
+  worker:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/data:/data
+  watcher:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/data:/data
+  scheduler:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/data:/data
+  postgres:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/postgres:/var/lib/postgresql/data
+  redis:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/redis:/data
+  ollama:
+    volumes:
+      - /mnt/nextcloud-instant-uploads/tradutor/ollama:/root/.ollama

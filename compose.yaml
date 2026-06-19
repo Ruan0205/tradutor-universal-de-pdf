@@ -1,0 +1,144 @@
+name: tradutor-universal-pdf
+
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: production
+      APP_PORT: 8050
+      BASE_DIR: /data
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen3.5:9b
+      LLM_BASE_URL: http://ollama:11434
+      LLM_CONTEXT_TOKENS: ${LLM_CONTEXT_TOKENS:-32768}
+      LLM_NUM_GPU: ${LLM_NUM_GPU:-0}
+      LLM_KEEP_ALIVE: ${LLM_KEEP_ALIVE:-24h}
+      LLM_REASONING_MODE: ${LLM_REASONING_MODE:-off}
+      JOB_DISPATCHER: celery
+    ports:
+      - "8050:8050"
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8050/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: celery -A translator.worker.celery_app worker --loglevel=INFO --concurrency=1
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BASE_DIR: /data
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: ollama
+      LLM_MODEL: qwen3.5:9b
+      LLM_BASE_URL: http://ollama:11434
+      LLM_CONTEXT_TOKENS: ${LLM_CONTEXT_TOKENS:-32768}
+      LLM_NUM_GPU: ${LLM_NUM_GPU:-0}
+      LLM_KEEP_ALIVE: ${LLM_KEEP_ALIVE:-24h}
+      LLM_REASONING_MODE: ${LLM_REASONING_MODE:-off}
+      JOB_DISPATCHER: celery
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  watcher:
+    build: .
+    command: python -m translator.watcher --interval 15
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BASE_DIR: /data
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+      JOB_DISPATCHER: celery
+    volumes:
+      - translator-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: celery -A translator.worker.celery_app beat --loglevel=INFO
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BASE_DIR: /data
+      DATABASE_URL: postgresql+psycopg://translator:translator@postgres:5432/translator
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - translator-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16.6-bookworm
+    environment:
+      POSTGRES_USER: translator
+      POSTGRES_PASSWORD: translator
+      POSTGRES_DB: translator
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U translator -d translator"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4.2-bookworm
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    environment:
+      OLLAMA_LLM_LIBRARY: ${OLLAMA_LLM_LIBRARY:-cpu}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+      OLLAMA_NO_CLOUD: ${OLLAMA_NO_CLOUD:-1}
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  translator-data:
+  postgres-data:
+  redis-data:
+  ollama-data:

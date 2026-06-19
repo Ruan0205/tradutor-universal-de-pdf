@@ -48,6 +48,27 @@ assets/fonts/
 Thumbs.db
 .vscode/
 
+# Configuracao privada e secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+compose.override.yaml
+
+# Estado persistente local
+*.sqlite
+*.sqlite3
+*.db
+*.ir.json
+*.manifest.json
+*.relatorio.json
+*.relatorio.html
+reports/
+backups/
+
 # Duplicata de diretório gerada
 tradutor-universal-de-pdf/
 

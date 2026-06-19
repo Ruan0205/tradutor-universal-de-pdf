@@ -1,0 +1,13 @@
+services:
+  api:
+    environment:
+      MAX_CONCURRENT_BOOKS: 1
+      MAX_MEMORY_PERCENT: 85
+  worker:
+    environment:
+      MAX_CONCURRENT_BOOKS: 1
+      MAX_MEMORY_PERCENT: 85
+    deploy:
+      resources:
+        limits:
+          memory: 6g

@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tradutor-universal-de-pdf.local/schemas/document_ir.schema.json",
+  "title": "Tradutor Universal de PDF Document IR",
+  "type": "object",
+  "required": ["ir_version", "document_id", "source_path", "checksum", "pages"],
+  "properties": {
+    "ir_version": { "const": "0.1.0" },
+    "document_id": { "type": "string", "minLength": 1 },
+    "source_path": { "type": "string", "minLength": 1 },
+    "checksum": { "type": "string", "minLength": 1 },
+    "source_language": { "type": ["string", "null"] },
+    "target_language": { "type": ["string", "null"] },
+    "title": { "type": ["string", "null"] },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "tool_versions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "glossary_id": { "type": ["string", "null"] },
+    "translation_memory_id": { "type": ["string", "null"] },
+    "history": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "pages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/page" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "bbox": {
+      "type": "object",
+      "required": ["x0", "y0", "x1", "y1"],
+      "properties": {
+        "x0": { "type": "number" },
+        "y0": { "type": "number" },
+        "x1": { "type": "number" },
+        "y1": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source", "tool"],
+      "properties": {
+        "source": { "type": "string" },
+        "tool": { "type": "string" },
+        "tool_version": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "text_style": {
+      "type": "object",
+      "properties": {
+        "font_name": { "type": ["string", "null"] },
+        "font_size": { "type": ["number", "null"] },
+        "font_category": { "type": ["string", "null"] },
+        "color": {
+          "type": ["array", "null"],
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "alignment": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "line": {
+      "type": "object",
+      "required": ["line_id", "bbox"],
+      "properties": {
+        "line_id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "original_text": { "type": "string" },
+        "translated_text": { "type": ["string", "null"] },
+        "style": { "$ref": "#/$defs/text_style" },
+        "source": { "type": "string" },
+        "ocr_confidence": { "type": ["number", "null"] },
+        "translation_confidence": { "type": ["number", "null"] },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "block": {
+      "type": "object",
+      "required": ["block_id", "type", "bbox"],
+      "properties": {
+        "block_id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "lines": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/line" }
+        },
+        "original_text": { "type": "string" },
+        "translated_text": { "type": ["string", "null"] },
+        "language": { "type": ["string", "null"] },
+        "reading_order": { "type": ["integer", "null"] },
+        "status": { "type": "string" },
+        "source": { "type": "string" },
+        "ocr_confidence": { "type": ["number", "null"] },
+        "translation_provider": { "type": ["string", "null"] },
+        "translation_model": { "type": ["string", "null"] },
+        "translation_confidence": { "type": ["number", "null"] },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "table_cell": {
+      "type": "object",
+      "required": ["cell_id", "bbox", "row_index", "column_index"],
+      "properties": {
+        "cell_id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "row_index": { "type": "integer" },
+        "column_index": { "type": "integer" },
+        "row_span": { "type": "integer", "minimum": 1 },
+        "column_span": { "type": "integer", "minimum": 1 },
+        "original_text": { "type": "string" },
+        "translated_text": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"] },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "table": {
+      "type": "object",
+      "required": ["table_id", "bbox"],
+      "properties": {
+        "table_id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "cells": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/table_cell" }
+        },
+        "source": { "type": "string" },
+        "confidence": { "type": ["number", "null"] },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "image": {
+      "type": "object",
+      "required": ["image_id", "bbox"],
+      "properties": {
+        "image_id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "xref": { "type": ["integer", "null"] },
+        "path": { "type": ["string", "null"] },
+        "has_text": { "type": "boolean" },
+        "translated_path": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"] },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "required": ["page_id", "page_number", "width", "height"],
+      "properties": {
+        "page_id": { "type": "string", "minLength": 1 },
+        "page_number": { "type": "integer", "minimum": 1 },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "rotation": { "type": "integer" },
+        "classification": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        },
+        "tables": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/table" }
+        },
+        "images": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/image" }
+        },
+        "headers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        },
+        "footers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenance" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

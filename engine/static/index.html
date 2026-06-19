@@ -289,6 +289,7 @@ button { cursor:pointer; font-family:inherit; border:none; }
         <div class="eta-item"><div class="v" id="etaRemaining">--</div><div class="l">Tempo Restante</div></div>
         <div class="eta-item"><div class="v" id="etaFinish">--</div><div class="l">Previsão Término</div></div>
         <div class="eta-item"><div class="v" id="etaSpeed">--</div><div class="l">Velocidade</div></div>
+        <div class="eta-item"><div class="v" id="etaTokens">--</div><div class="l">Tokens/s</div></div>
         <div class="eta-item"><div class="v" id="etaTotalTime">--</div><div class="l">Tempo Total Gasto</div></div>
       </div>
     </div>
@@ -351,6 +352,11 @@ button { cursor:pointer; font-family:inherit; border:none; }
     <div class="section">
       <h3>📋 Fila de Tradução (<span id="queueCount">0</span>)</h3>
       <div id="queueTable" style="overflow-x:auto;"></div>
+    </div>
+
+    <div class="section">
+      <h3>Livros Nao Traduzidos (<span id="untranslatedCount">0</span>)</h3>
+      <div id="untranslatedTable" style="overflow-x:auto;"></div>
     </div>
   </div>
 
@@ -426,6 +432,13 @@ button { cursor:pointer; font-family:inherit; border:none; }
           <div class="info">
             <h4>🧠 IA Rebuild (Experimental)</h4>
             <small>Apaga o texto original com inpainting e recria o texto traduzido tentando manter estilo visual da arte.</small>
+          </div>
+          <button class="btn btn-sm btn-secondary">Usar</button>
+        </div>
+        <div class="model-card" id="imgModeGoogleTranslate" onclick="setImageTextMode('google_translate_images')">
+          <div class="info">
+            <h4>Google Tradutor Imagens</h4>
+            <small>Modo opcional para recortes de texto em imagem usando fluxo externo configurado. Desativado por padrão até haver credenciais e consentimento.</small>
           </div>
           <button class="btn btn-sm btn-secondary">Usar</button>
         </div>
@@ -726,19 +739,35 @@ async function api(method, path, body) {
 }
 
 async function apiStart() { 
-  const startBtn = document.querySelector('[onclick="apiStart()"]');
-  if (startBtn) startBtn.disabled = true;
-  const r = await api('POST', '/api/start'); 
-  if (!r.ok) {
-    if (startBtn) startBtn.disabled = false;
+  const startBtn = document.getElementById('btnStart') || document.querySelector('[onclick="apiStart()"]');
+  if (startBtn) {
+    startBtn.disabled = true;
+    startBtn.dataset.originalText = startBtn.dataset.originalText || startBtn.textContent;
+    startBtn.textContent = 'Iniciando...';
   }
-  toast(r.ok ? 'Pipeline iniciado!' : r.error, !r.ok); 
+  const r = await api('POST', '/api/start'); 
+  if (startBtn) {
+    startBtn.disabled = false;
+    startBtn.textContent = startBtn.dataset.originalText || '▶ Iniciar';
+  }
+  const message = r.message || (r.ok ? 'Pipeline iniciado!' : r.error || 'Falha ao iniciar');
+  toast(message, !r.ok); 
   refresh(); 
 }
 async function apiStop() { const r = await api('POST', '/api/stop'); toast(r.ok ? 'Pipeline parado.' : r.error, !r.ok); refresh(); }
 async function apiPause() { const r = await api('POST', '/api/pause'); toast(r.ok ? 'Pipeline pausado.' : r.error, !r.ok); refresh(); }
 async function apiResume() { const r = await api('POST', '/api/resume'); toast(r.ok ? 'Pipeline retomado!' : r.error, !r.ok); refresh(); }
 async function apiOpenDir(dir) { await api('POST', '/api/open-directory', { directory: dir }); }
+function translatedPdfUrl(name, download = false) {
+  const suffix = download ? '?download=1' : '';
+  return '/pdf/translated/' + encodeURIComponent(name) + suffix;
+}
+function openTranslatedPdf(name) {
+  window.open(translatedPdfUrl(name), '_blank', 'noopener');
+}
+function downloadTranslatedPdf(name) {
+  window.location.href = translatedPdfUrl(name, true);
+}
 async function apiSetModel(model) { const r = await api('POST', '/api/model', { model }); toast(r.ok ? `Modelo alterado: ${model}` : r.error, !r.ok); refresh(); }
 
 async function apiRetranslate(filename) {
@@ -886,8 +915,15 @@ async function changeSortOrder() {
 async function saveCustomOrder() {
   const items = document.querySelectorAll('#customOrderList .drag-row');
   const order = Array.from(items).map(el => el.dataset.name);
-  const r = await api('POST', '/api/order', { sort_order: 'custom', custom_order: order });
-  toast(r.ok ? 'Ordem personalizada salva!' : 'Erro', !r.ok);
+  const r = await api('POST', '/api/queue/order', { order });
+  toast(r.ok ? 'Ordem da fila salva!' : 'Erro', !r.ok);
+  refresh();
+}
+
+async function apiQueueNext(filename) {
+  const r = await api('POST', '/api/queue/next', { filename });
+  toast(r.ok ? 'Livro definido como proximo da fila.' : (r.detail || r.error || 'Erro'), !r.ok);
+  refresh();
 }
 
 async function setManualOriginal() {
@@ -1020,7 +1056,7 @@ function renderSidebar() {
 
   const dotP = document.querySelector('#pipelineStatus .status-dot');
   const ps = DATA.status;
-  dotP.className = 'status-dot ' + (ps === 'running' ? 'on' : ps === 'paused' ? 'warn' : 'off');
+  dotP.className = 'status-dot ' + (DATA.pipeline_alive ? (ps === 'paused' ? 'warn' : 'on') : 'off');
 
   const dotV = document.querySelector('#validatorStatus .status-dot');
   dotV.className = 'status-dot ' + (DATA.validator_alive ? 'on' : 'off');
@@ -1082,6 +1118,7 @@ function renderDashboard() {
   document.getElementById('etaRemaining').textContent = s.eta_str || '--';
   document.getElementById('etaFinish').textContent = s.finish_time || '--';
   document.getElementById('etaSpeed').textContent = s.sec_per_mb ? `${s.sec_per_mb} s/MB` : '--';
+  document.getElementById('etaTokens').textContent = s.tokens_per_second ? `${s.tokens_per_second}` : '--';
   // Tempo Total Gasto: inclui livro atual em progresso
   const totalElapsed = [s.total_elapsed_sec, s.pipeline_elapsed_sec, s.total_time_sec]
     .find(v => Number.isFinite(v));
@@ -1097,6 +1134,8 @@ function renderDashboard() {
     const curPctBook = totalPages > 0 ? Math.round(curPage / totalPages * 100) : 0;
     const elapsed = s.current_elapsed_sec;
     const elStr = Number.isFinite(elapsed) ? fmtDur(elapsed) : '--';
+    const tokenText = s.current_total_tokens ? `${s.current_total_tokens} tokens` : (s.total_tokens ? `${s.total_tokens} tokens total` : '-- tokens');
+    const tokenSpeed = s.current_tokens_per_second || s.tokens_per_second;
     const previewHtml = preview.available ? `
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
           <a class="btn btn-sm btn-secondary" href="${preview.url}" target="_blank" rel="noopener">
@@ -1110,6 +1149,8 @@ function renderDashboard() {
           <span>📁 ${cur.size_mb || '?'} MB</span>
           <span>📄 Página ${curPage}/${totalPages}</span>
           <span>⏱ ${elStr}</span>
+          <span>Tokens: ${tokenText}</span>
+          <span>${tokenSpeed ? tokenSpeed + ' tok/s' : '-- tok/s'}</span>
           <span>📊 Livro #${st.book_index || '?'} de ${st.total_books || '?'}</span>
           ${isPaused ? '<span style="color:var(--yellow)">⏸ PAUSADO</span>' : ''}
         </div>
@@ -1185,12 +1226,14 @@ function renderBooks() {
   const books = DATA.books || {};
   const translated = books.translated || [];
   const input = books.input || [];
+  const untranslated = books.untranslated || input;
   const cfg = DATA.config || {};
 
   document.getElementById('translatedCount').textContent = translated.length;
   document.getElementById('queueCount').textContent = input.length;
+  const untranslatedCount = document.getElementById('untranslatedCount');
+  if (untranslatedCount) untranslatedCount.textContent = untranslated.length;
 
-  // Sort order
   const sortSel = document.getElementById('sortOrder');
   if (sortSel.value !== (cfg.sort_order || 'smallest_first')) {
     sortSel.value = cfg.sort_order || 'smallest_first';
@@ -1198,7 +1241,6 @@ function renderBooks() {
   document.getElementById('customOrderArea').style.display = cfg.sort_order === 'custom' ? '' : 'none';
   document.getElementById('sortInfo').textContent = input.length ? `${input.length} livros na fila` : '';
 
-  // Translated table
   if (translated.length) {
     let rows = translated.map(b => {
       const v = b.validation;
@@ -1208,35 +1250,39 @@ function renderBooks() {
         <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
         <td>${b.size_mb} MB</td><td>${dur}</td><td>${vBadge}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="viewBook('${esc(b.name)}')">👁</button>
-          <button class="btn btn-sm btn-secondary" onclick="apiRevalidate('${esc(b.name)}')" title="Revalidar">🔄</button>
-          <button class="btn btn-sm btn-warning" onclick="apiRetranslate('${esc(b.name)}')" title="Retraduzir (próximo na fila)">🔁</button>
+          <button class="btn btn-sm btn-secondary" onclick="viewBook('${esc(b.name)}')" title="Visualizar na ferramenta">Ver</button>
+          <button class="btn btn-sm btn-secondary" onclick="openTranslatedPdf('${esc(b.name)}')" title="Abrir PDF em nova aba">Abrir</button>
+          <button class="btn btn-sm btn-primary" onclick="downloadTranslatedPdf('${esc(b.name)}')" title="Baixar PDF traduzido">Baixar</button>
+          <button class="btn btn-sm btn-secondary" onclick="apiRevalidate('${esc(b.name)}')" title="Revalidar">Revalidar</button>
+          <button class="btn btn-sm btn-warning" onclick="apiRetranslate('${esc(b.name)}')" title="Retraduzir como proximo na fila">Retraduzir</button>
         </td>
       </tr>`;
     }).join('');
     document.getElementById('translatedTable').innerHTML = `<table class="tbl"><thead><tr>
-      <th>Livro Traduzido</th><th>Tamanho</th><th>Duração</th><th>Validação</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>`;
+      <th>Livro Traduzido</th><th>Tamanho</th><th>Duracao</th><th>Validacao</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
   } else {
     document.getElementById('translatedTable').innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Nenhum livro traduzido</div>';
   }
 
-  // Queue table
   if (input.length) {
     let rows = input.map((b, i) => `<tr>
-      <td><span class="drag-handle">⠿</span> ${i+1}.</td>
-      <td>${b.name}</td><td>${b.size_mb} MB</td>
+      <td>${i+1}.</td>
+      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
+      <td>${b.size_mb} MB</td>
+      <td>${b.queued ? '<span class="badge pending">Fila</span>' : '<span class="badge">Arquivo</span>'}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="apiQueueNext('${esc(b.name)}')">Proximo</button></td>
     </tr>`).join('');
     document.getElementById('queueTable').innerHTML = `<table class="tbl"><thead><tr>
-      <th>#</th><th>PDF na Fila</th><th>Tamanho</th></tr></thead><tbody>${rows}</tbody></table>`;
+      <th>#</th><th>PDF na Fila</th><th>Tamanho</th><th>Status</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
 
-    // Custom order list (for drag reorder)
     if (cfg.sort_order === 'custom') {
       const list = document.getElementById('customOrderList');
       list.innerHTML = input.map(b =>
         `<div class="drag-row" data-name="${esc(b.name)}" draggable="true" style="display:flex;align-items:center;padding:8px 12px;background:var(--bg3);border:1px solid var(--bg4);border-radius:6px;margin-bottom:4px;cursor:grab;">
-          <span class="drag-handle">⠿</span>
+          <span class="drag-handle">::</span>
           <span style="flex:1;margin-left:8px;font-size:13px;">${b.name}</span>
           <span style="color:var(--text2);font-size:12px;">${b.size_mb} MB</span>
+          <button class="btn btn-sm btn-secondary" onclick="apiQueueNext('${esc(b.name)}')" style="margin-left:10px;">Proximo</button>
         </div>`
       ).join('');
       setupDragReorder(list);
@@ -1244,8 +1290,24 @@ function renderBooks() {
   } else {
     document.getElementById('queueTable').innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Fila vazia</div>';
   }
-}
 
+  const unTable = document.getElementById('untranslatedTable');
+  if (unTable) {
+    if (untranslated.length) {
+      let rows = untranslated.map((b, i) => `<tr>
+        <td>${i+1}.</td>
+        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
+        <td>${b.size_mb} MB</td>
+        <td>${b.queued ? '<span class="badge pending">Na fila</span>' : '<span class="badge">Nao enfileirado</span>'}</td>
+        <td>${b.queued ? `<button class="btn btn-sm btn-primary" onclick="apiQueueNext('${esc(b.name)}')">Proximo</button>` : ''}</td>
+      </tr>`).join('');
+      unTable.innerHTML = `<table class="tbl"><thead><tr>
+        <th>#</th><th>Livro nao traduzido</th><th>Tamanho</th><th>Status</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
+    } else {
+      unTable.innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Nenhum livro nao traduzido</div>';
+    }
+  }
+}
 function renderModels() {
   const o = DATA.ollama || {};
   const cfg = DATA.config || {};
@@ -1291,6 +1353,7 @@ function renderModels() {
   const imageMode = (cfg.image_text_mode || 'legacy').toLowerCase();
   const cardLegacy = document.getElementById('imgModeLegacy');
   const cardAi = document.getElementById('imgModeAiRebuild');
+  const cardGoogle = document.getElementById('imgModeGoogleTranslate');
   if (cardLegacy) {
     cardLegacy.classList.toggle('active', imageMode === 'legacy');
     const btn = cardLegacy.querySelector('button');
@@ -1305,6 +1368,14 @@ function renderModels() {
     if (btn) {
       btn.className = 'btn btn-sm ' + (imageMode === 'ai_rebuild' ? 'btn-primary' : 'btn-secondary');
       btn.textContent = imageMode === 'ai_rebuild' ? 'Ativo' : 'Usar';
+    }
+  }
+  if (cardGoogle) {
+    cardGoogle.classList.toggle('active', imageMode === 'google_translate_images');
+    const btn = cardGoogle.querySelector('button');
+    if (btn) {
+      btn.className = 'btn btn-sm ' + (imageMode === 'google_translate_images' ? 'btn-primary' : 'btn-secondary');
+      btn.textContent = imageMode === 'google_translate_images' ? 'Ativo' : 'Usar';
     }
   }
 
@@ -1387,6 +1458,8 @@ function renderValidator() {
         <div style="width:120px;margin:0 12px;"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden;">
           <div style="width:${v.rate}%;height:100%;background:var(--${cls});border-radius:4px;"></div></div></div>
         <span class="badge ${v.result.toLowerCase()}">${v.result} ${v.rate}%</span>
+        <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="openTranslatedPdf('${esc(name)}')" title="Abrir PDF">Abrir</button>
+        <button class="btn btn-sm btn-primary" style="margin-left:8px;" onclick="downloadTranslatedPdf('${esc(name)}')" title="Baixar PDF">Baixar</button>
         <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="apiRevalidate('${esc(name)}')" title="Revalidar">🔄</button>
       </div>`;
     }).join('');
