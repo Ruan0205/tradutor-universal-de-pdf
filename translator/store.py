@@ -191,8 +191,21 @@ class JobStore:
             ).scalars().first()
             return self.to_dict(job) if job else None
 
+    def has_running_job(self) -> bool:
+        with self.session() as session:
+            return bool(
+                session.execute(
+                    select(JobRecord.id).where(JobRecord.status == JobStatus.RUNNING.value).limit(1)
+                ).scalars().first()
+            )
+
     def claim_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self.session() as session:
+            running = session.execute(
+                select(JobRecord.id).where(JobRecord.status == JobStatus.RUNNING.value).limit(1)
+            ).scalars().first()
+            if running:
+                return None
             result = session.execute(
                 update(JobRecord)
                 .where(JobRecord.id == job_id, JobRecord.status == JobStatus.QUEUED.value)
@@ -206,6 +219,8 @@ class JobStore:
             return self.to_dict(job) if job else None
 
     def claim_next_queued_job(self) -> Optional[Dict[str, Any]]:
+        if self.has_running_job():
+            return None
         candidate = self.next_queued_job()
         if not candidate:
             return None

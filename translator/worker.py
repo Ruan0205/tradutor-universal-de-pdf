@@ -25,6 +25,9 @@ def process_job_task(job_id: str) -> dict:
     runtime_settings = load_settings()
     runtime_settings.ensure_dirs()
     store = init_store(runtime_settings.database_url)
+    current = store.get_job(job_id)
+    if current and current["status"] != "running" and store.has_running_job():
+        return {"processed": False, "job_id": job_id, "reason": "busy"}
     claimed = store.claim_job(job_id)
     if not claimed or claimed["status"] != "running":
         return store.get_job(job_id) or {"id": job_id, "status": "missing"}
@@ -37,6 +40,8 @@ def process_next_queued_job() -> dict:
     runtime_settings = load_settings()
     runtime_settings.ensure_dirs()
     store = init_store(runtime_settings.database_url)
+    if store.has_running_job():
+        return {"processed": False, "reason": "busy"}
     job = store.claim_next_queued_job()
     if not job:
         return {"processed": False, "reason": "empty"}

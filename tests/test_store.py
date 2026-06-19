@@ -89,6 +89,26 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(first["status"], "running")
             self.assertIsNone(second)
 
+    def test_only_one_job_can_be_running_at_a_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_pdf = root / "first.pdf"
+            second_pdf = root / "second.pdf"
+            make_pdf(first_pdf)
+            make_pdf(second_pdf)
+            store = init_store(f"sqlite:///{root / 'jobs.db'}")
+            first = store.submit_pdf(first_pdf)
+            second = store.submit_pdf(second_pdf)
+
+            claimed_first = store.claim_job(first["id"])
+            claimed_second = store.claim_job(second["id"])
+            claimed_next = store.claim_next_queued_job()
+
+            self.assertEqual(claimed_first["status"], "running")
+            self.assertTrue(store.has_running_job())
+            self.assertIsNone(claimed_second)
+            self.assertIsNone(claimed_next)
+
 
 if __name__ == "__main__":
     unittest.main()

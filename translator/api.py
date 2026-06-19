@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
-from .dispatch import dispatch_job
+from .dispatch import dispatch_next_if_idle
 from .domain import JobStatus
 from .providers import GoogleTranslateImagesProvider, make_inference_provider
 from .providers.ocr import OCRmyPDFProvider, RapidOCRProvider, TesseractProvider
@@ -108,7 +108,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Path must point to an existing PDF")
         job = store.submit_pdf(path, priority=request.priority, metadata={"authorized": request.authorized})
         if job["status"] == JobStatus.QUEUED.value:
-            dispatch_job(job["id"], settings)
+            dispatch_next_if_idle(settings)
         return job
 
     @app.post("/api/v1/jobs/upload")
@@ -126,7 +126,7 @@ def create_app() -> FastAPI:
                 fh.write(chunk)
         job = store.submit_pdf(target, metadata={"authorized": False, "submitted_by": "upload"})
         if job["status"] == JobStatus.QUEUED.value:
-            dispatch_job(job["id"], settings)
+            dispatch_next_if_idle(settings)
         return job
 
     @app.get("/api/v1/jobs/{job_id}")
@@ -183,7 +183,7 @@ def create_app() -> FastAPI:
         store: JobStore = Depends(get_store),
     ):
         job = store.update_job(job_id, status=JobStatus.QUEUED.value)
-        dispatch_job(job_id, settings)
+        dispatch_next_if_idle(settings)
         return {"ok": True, "job_id": job_id, "status": job["status"]}
 
     @app.post("/api/v1/jobs/{job_id}/retry", response_model=JobActionResponse)
@@ -194,7 +194,7 @@ def create_app() -> FastAPI:
         store: JobStore = Depends(get_store),
     ):
         job = store.update_job(job_id, status=JobStatus.QUEUED.value, error=None)
-        dispatch_job(job_id, settings)
+        dispatch_next_if_idle(settings)
         return {"ok": True, "job_id": job_id, "status": job["status"]}
 
     @app.post("/api/v1/jobs/{job_id}/cancel", response_model=JobActionResponse)
@@ -317,11 +317,12 @@ def create_app() -> FastAPI:
             submitted.append({"id": job["id"], "name": path.name, "status": job["status"]})
 
         queued_jobs = [job for job in store.list_jobs(limit=1000) if job["status"] == JobStatus.QUEUED.value]
-        for job in queued_jobs:
-            try:
-                dispatched.append({"id": job["id"], "name": job["original_filename"], **dispatch_job(job["id"], settings)})
-            except Exception as exc:
-                dispatch_errors.append({"id": job["id"], "name": job["original_filename"], "error": str(exc)})
+        try:
+            dispatch_result = dispatch_next_if_idle(settings)
+            if dispatch_result.get("dispatched"):
+                dispatched.append(dispatch_result)
+        except Exception as exc:
+            dispatch_errors.append({"error": str(exc)})
 
         total = len(submitted) + len(restarted)
         if dispatch_errors and not dispatched:
@@ -347,7 +348,7 @@ def create_app() -> FastAPI:
             "restarted": restarted,
             "dispatched": dispatched,
             "dispatch_errors": dispatch_errors,
-            "message": f"Fila iniciada: {len(submitted)} novo(s), {len(restarted)} reiniciado(s), {len(dispatched)} despacho(s).",
+            "message": f"Fila pronta: {len(submitted)} novo(s), {len(restarted)} reiniciado(s), {len(dispatched)} livro em execução.",
         }
 
     @app.post("/api/stop")
@@ -376,8 +377,8 @@ def create_app() -> FastAPI:
         for job in store.list_jobs(limit=1000):
             if job["status"] == JobStatus.PAUSED.value:
                 resumed = store.update_job(job["id"], status=JobStatus.QUEUED.value, error=None)
-                dispatch_job(job["id"], settings)
                 changed.append(resumed)
+        dispatch_next_if_idle(settings)
         return {"ok": True, "jobs": changed}
 
     @app.post("/api/upload-pdfs")
@@ -420,7 +421,7 @@ def create_app() -> FastAPI:
         target = settings.input_dir / original.name
         target.write_bytes(original.read_bytes())
         job = store.submit_pdf(target, priority=100, metadata={"submitted_by": "dashboard", "retranslate": True})
-        dispatch_job(job["id"], settings)
+        dispatch_next_if_idle(settings)
         return {"ok": True, "message": f"{filename} queued for retranslation", "job": job}
 
     @app.post("/api/revalidate")

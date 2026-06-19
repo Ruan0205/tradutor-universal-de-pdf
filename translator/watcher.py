@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import time
 
-from .dispatch import dispatch_job
+from .dispatch import dispatch_next_if_idle
 from .domain import JobStatus
 from .settings import load_settings
 from .store import init_store
@@ -35,8 +35,8 @@ def scan_once() -> list[dict]:
             continue
         job = store.submit_pdf(path, metadata={"submitted_by": "watcher"})
         submitted.append(job)
-        if job["status"] == JobStatus.QUEUED.value:
-            dispatch_job(job["id"], settings)
+    if any(job["status"] == JobStatus.QUEUED.value for job in submitted):
+        dispatch_next_if_idle(settings)
     return submitted
 
 
