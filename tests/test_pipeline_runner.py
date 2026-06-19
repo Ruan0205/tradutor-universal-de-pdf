@@ -8,7 +8,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from engine.document_ir import BBox, IRBlock, IRDocument, IRPage
-from translator.pipeline import PipelineRunner, _should_translate_block_text
+from translator.pipeline import PipelineRunner, _should_translate_block_text, _translation_chunk_token_budget
 from translator.providers import MockProvider, TranslationResult
 from translator.settings import Settings
 from translator.store import init_store
@@ -180,6 +180,9 @@ class PipelineRunnerTests(unittest.TestCase):
     def test_ocr_noise_is_not_sent_to_translation(self):
         self.assertFalse(_should_translate_block_text("LLY A. gsag Po a4 its aff Gee ARsa fCb wage Kee eee"))
         self.assertTrue(_should_translate_block_text("Armor Class 18 Hit Points 120 The creature makes two attacks."))
+
+    def test_translation_chunk_budget_keeps_room_for_prompt(self):
+        self.assertEqual(_translation_chunk_token_budget(Settings(llm_context_tokens=2048)), 700)
 
     def test_long_translation_block_is_split_before_provider_call(self):
         with tempfile.TemporaryDirectory() as tmp:

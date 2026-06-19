@@ -846,7 +846,7 @@ def _should_translate_block_text(text: str) -> bool:
 
 def _translation_chunk_token_budget(settings: Settings) -> int:
     context_tokens = settings.llm_context_tokens or 2048
-    return max(256, min(1200, context_tokens - 512))
+    return max(256, min(700, context_tokens - 768))
 
 
 def _split_text_for_translation(text: str, max_tokens: int) -> list[str]:
