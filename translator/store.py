@@ -200,12 +200,16 @@ class JobStore:
             )
 
     def has_active_paused_job(self) -> bool:
+        return self.has_active_blocking_job(statuses={JobStatus.PAUSED.value})
+
+    def has_active_blocking_job(self, *, statuses: set[str] | None = None) -> bool:
+        statuses = statuses or {JobStatus.PAUSED.value, JobStatus.FAILED.value}
         with self.session() as session:
             return bool(
                 session.execute(
                     select(JobRecord.id)
                     .where(
-                        JobRecord.status == JobStatus.PAUSED.value,
+                        JobRecord.status.in_(statuses),
                         (JobRecord.current_page > 0) | (JobRecord.total_pages > 0) | (JobRecord.current_stage.is_not(None)),
                     )
                     .limit(1)

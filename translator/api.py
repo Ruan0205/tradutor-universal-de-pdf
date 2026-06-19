@@ -724,6 +724,8 @@ def _legacy_job_activity_score(job: dict) -> tuple[int, str]:
         score += 50_000 + int(job.get("total_pages") or 0)
     if job.get("current_stage"):
         score += 10_000
+    if metadata.get("queued_from_books_tab"):
+        score += 1_000_000
     if metadata.get("started_at"):
         score += 1_000
     score += int(metrics.get("blocks") or 0)

@@ -28,8 +28,8 @@ def dispatch_next_if_idle(settings: Settings | None = None) -> dict:
     store = init_store(runtime_settings.database_url)
     if store.has_running_job():
         return {"dispatcher": runtime_settings.job_dispatcher, "dispatched": False, "reason": "running"}
-    if store.has_active_paused_job():
-        return {"dispatcher": runtime_settings.job_dispatcher, "dispatched": False, "reason": "paused"}
+    if store.has_active_blocking_job():
+        return {"dispatcher": runtime_settings.job_dispatcher, "dispatched": False, "reason": "active_interrupted"}
     next_job = store.next_queued_job()
     if not next_job:
         return {"dispatcher": runtime_settings.job_dispatcher, "dispatched": False, "reason": "empty"}

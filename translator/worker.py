@@ -37,8 +37,8 @@ def process_next_queued_job() -> dict:
     store = init_store(runtime_settings.database_url)
     if store.has_running_job():
         return {"processed": False, "reason": "busy"}
-    if store.has_active_paused_job():
-        return {"processed": False, "reason": "paused"}
+    if store.has_active_blocking_job():
+        return {"processed": False, "reason": "active_interrupted"}
     job = store.claim_next_queued_job()
     if not job:
         return {"processed": False, "reason": "empty"}

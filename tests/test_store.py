@@ -123,6 +123,22 @@ class StoreTests(unittest.TestCase):
             store.update_job(active["id"], status="paused", current_stage="translation", current_page=12, total_pages=226)
 
             self.assertTrue(store.has_active_paused_job())
+            self.assertTrue(store.has_active_blocking_job())
+
+    def test_active_failed_job_blocks_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            active_pdf = root / "active.pdf"
+            waiting_pdf = root / "waiting.pdf"
+            make_pdf(active_pdf)
+            make_pdf(waiting_pdf)
+            store = init_store(f"sqlite:///{root / 'jobs.db'}")
+            active = store.submit_pdf(active_pdf)
+            store.submit_pdf(waiting_pdf)
+
+            store.update_job(active["id"], status="failed", current_stage="translation", current_page=12, total_pages=226)
+
+            self.assertTrue(store.has_active_blocking_job())
 
 
 if __name__ == "__main__":
