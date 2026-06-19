@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 import fitz  # pymupdf
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from translator.providers import GoogleTranslateImagesError, GoogleTranslateImagesProvider
 try:
     import cv2
 except Exception:
@@ -60,7 +61,10 @@ DEFAULT_CONFIG = {
     "sort_order": "smallest_first",
     "custom_order": [],
     "validation_method": "structural",
-    "image_text_mode": "legacy",
+    "image_text_mode": "google_translate_images",
+    "google_translate_images_enabled": True,
+    "google_translate_images_timeout_ms": 120000,
+    "google_translate_images_headless": True,
     "compute_backend": "cpu",
     "image_ai_selectable_only": True,
     "image_inpaint_radius": 3,
@@ -772,6 +776,14 @@ class PDFTranslator:
         self._image_font_choice_cache: Dict[Tuple[int, int, int], Optional[str]] = {}
         self._pdf_font_choice_cache: Dict[Tuple[str, bool, bool], Optional[str]] = {}
         self._pdf_font_alias_cache: Dict[str, str] = {}
+        self.google_translate_images = GoogleTranslateImagesProvider(
+            enabled=bool(CFG.get("google_translate_images_enabled", True)),
+            cache_dir=BASE_DIR / ".cache" / "google_translate_images",
+            headless=bool(CFG.get("google_translate_images_headless", True)),
+            timeout_ms=int(CFG.get("google_translate_images_timeout_ms", 120000)),
+            source_lang=str(CFG.get("source_lang", "English")),
+            target_lang=str(CFG.get("target_lang", "Português Brasileiro")),
+        )
         self._refresh_image_font_candidates(force=True)
 
     def translate_pdf(self, input_path: Path, output_path: Path,
@@ -912,6 +924,22 @@ class PDFTranslator:
             if not img_bytes:
                 continue
 
+            try:
+                pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            except Exception:
+                continue
+
+            if image_mode == "google_translate_images":
+                translated_img = self._translate_image_with_google(pil_img, is_scanned=is_scanned)
+                if translated_img is not None:
+                    buf = io.BytesIO()
+                    translated_img.save(buf, format="PNG")
+                    try:
+                        page.replace_image(xref, stream=buf.getvalue())
+                    except Exception as e:
+                        log.warning("Não substituiu imagem xref=%d após Google Translate Images: %s", xref, e)
+                    continue
+
             ocr_results = self.ocr.ocr_image(img_bytes)
             if not ocr_results:
                 continue
@@ -924,10 +952,6 @@ class PDFTranslator:
 
             ocr_texts = [r[1] for r in valid_results]
             translations = self.translator.translate_batch(ocr_texts)
-            try:
-                pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            except Exception:
-                continue
 
             modified = self._render_ocr_text_on_image(
                 pil_img=pil_img,
@@ -966,6 +990,18 @@ class PDFTranslator:
         if not valid_results:
             return
 
+        if image_mode == "google_translate_images":
+            translated_img = self._translate_image_with_google(pil_img, is_scanned=True)
+            if translated_img is not None:
+                buf = io.BytesIO()
+                translated_img.save(buf, format="PNG")
+                page.clean_contents()
+                page_rect = page.rect
+                page.add_redact_annot(page_rect)
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE)
+                page.insert_image(page_rect, stream=buf.getvalue())
+                return
+
         ocr_texts = [r[1] for r in valid_results]
         translations = self.translator.translate_batch(ocr_texts)
         modified = self._render_ocr_text_on_image(
@@ -996,6 +1032,31 @@ class PDFTranslator:
         if is_scanned and CFG.get("image_ai_selectable_only", True):
             return "legacy"
         return mode
+
+    def _translate_image_with_google(self, pil_img: Image.Image, is_scanned: bool) -> Optional[Image.Image]:
+        try:
+            translated = self.google_translate_images.translate_pil_image(
+                pil_img,
+                source_lang=str(CFG.get("source_lang", "English")),
+                target_lang=str(CFG.get("target_lang", "Português Brasileiro")),
+            )
+        except GoogleTranslateImagesError as exc:
+            log.warning(
+                "Google Translate Images indisponível (%s). Usando fallback OCR local para %s.",
+                exc,
+                "página escaneada" if is_scanned else "imagem",
+            )
+            return None
+        except Exception as exc:
+            log.warning(
+                "Falha inesperada no Google Translate Images (%s). Usando fallback OCR local.",
+                exc,
+            )
+            return None
+        if translated is None:
+            log.warning("Google Translate Images desativado ou sem resultado; usando fallback OCR local.")
+            return None
+        return translated
 
     def _render_ocr_text_on_image(
         self,

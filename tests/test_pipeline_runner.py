@@ -1,7 +1,10 @@
 from pathlib import Path
+import io
 import tempfile
 import unittest
 
+from PIL import Image
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from engine.document_ir import BBox, IRBlock, IRDocument, IRPage
@@ -16,6 +19,33 @@ def make_pdf(path: Path) -> None:
     c.drawString(72, 720, "The wizard casts a spell.")
     c.drawString(72, 700, "The target takes damage.")
     c.save()
+
+
+def make_hybrid_pdf(path: Path) -> None:
+    image = Image.new("RGB", (80, 40), color=(240, 240, 240))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    c = canvas.Canvas(str(path))
+    c.drawString(72, 720, "The wizard casts a spell.")
+    c.drawImage(ImageReader(buffer), 72, 640, width=120, height=60)
+    c.save()
+
+
+class FakeImageProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def translate_image_bytes(self, image_bytes: bytes, source_lang: str, target_lang: str):
+        self.calls += 1
+        image = Image.new("RGB", (80, 40), color=(10, 120, 200))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+
+        class Result:
+            image_bytes = buffer.getvalue()
+
+        return Result()
 
 
 class PipelineRunnerTests(unittest.TestCase):
@@ -45,6 +75,30 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertIn("manifest", kinds)
             self.assertTrue((settings.output_dir / "book.traduzido.pdf").exists())
             self.assertEqual([path.name for path in settings.output_dir.glob("*.pdf")], ["book.traduzido.pdf"])
+
+    def test_google_translate_images_runs_for_hybrid_pdf_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "hybrid.pdf"
+            make_hybrid_pdf(pdf)
+            settings = Settings(
+                base_dir=root / "data",
+                database_url=f"sqlite:///{root / 'jobs.db'}",
+                llm_provider="mock",
+                image_text_mode="google_translate_images",
+                google_integration_enabled=True,
+            )
+            settings.ensure_dirs()
+            store = init_store(settings.database_url)
+            job = store.submit_pdf(pdf)
+            runner = PipelineRunner(settings, store, MockProvider())
+            fake_images = FakeImageProvider()
+            runner.google_images = fake_images
+
+            result = runner.process_job(job["id"])
+
+            self.assertEqual(result["status"], "completed")
+            self.assertGreaterEqual(fake_images.calls, 1)
 
     def test_text_validation_rejects_document_without_blocks(self):
         ir = IRDocument(

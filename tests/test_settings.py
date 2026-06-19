@@ -8,6 +8,26 @@ from translator.settings import load_settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_google_translate_images_is_default_image_mode(self):
+        old_mode = os.environ.get("IMAGE_TEXT_MODE")
+        old_base = os.environ.get("BASE_DIR")
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.environ.pop("IMAGE_TEXT_MODE", None)
+                os.environ["BASE_DIR"] = tmp
+                settings = load_settings()
+            finally:
+                if old_mode is None:
+                    os.environ.pop("IMAGE_TEXT_MODE", None)
+                else:
+                    os.environ["IMAGE_TEXT_MODE"] = old_mode
+                if old_base is None:
+                    os.environ.pop("BASE_DIR", None)
+                else:
+                    os.environ["BASE_DIR"] = old_base
+
+        self.assertEqual(settings.image_text_mode, "google_translate_images")
+
     def test_dashboard_config_overrides_runtime_model_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

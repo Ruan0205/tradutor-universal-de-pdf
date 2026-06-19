@@ -50,9 +50,9 @@ class Settings:
     llm_reasoning_mode: str = "off"
     job_dispatcher: str = "inline"
     watch_stability_seconds: float = 2.0
-    image_text_mode: str = "ocr"
+    image_text_mode: str = "google_translate_images"
     ocr_provider: str = "auto"
-    google_integration_enabled: bool = False
+    google_integration_enabled: bool = True
     max_concurrent_books: int = 1
     max_memory_percent: int = 85
     min_free_disk_gb: int = 20
@@ -140,9 +140,12 @@ def load_settings() -> Settings:
         llm_reasoning_mode=os.environ.get("LLM_REASONING_MODE", "off").strip().lower() or "off",
         job_dispatcher=os.environ.get("JOB_DISPATCHER", "inline").strip().lower() or "inline",
         watch_stability_seconds=float(os.environ.get("WATCH_STABILITY_SECONDS", "2.0") or 2.0),
-        image_text_mode=os.environ.get("IMAGE_TEXT_MODE", "ocr").strip().lower() or "ocr",
+        image_text_mode=(
+            os.environ.get("IMAGE_TEXT_MODE", "google_translate_images").strip().lower()
+            or "google_translate_images"
+        ),
         ocr_provider=os.environ.get("OCR_PROVIDER", "auto"),
-        google_integration_enabled=_bool_env("GOOGLE_INTEGRATION_ENABLED", False),
+        google_integration_enabled=_bool_env("GOOGLE_INTEGRATION_ENABLED", True),
         max_concurrent_books=_int_env("MAX_CONCURRENT_BOOKS", 1),
         max_memory_percent=_int_env("MAX_MEMORY_PERCENT", 85),
         min_free_disk_gb=_int_env("MIN_FREE_DISK_GB", 20),

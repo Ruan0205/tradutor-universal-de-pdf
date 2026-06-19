@@ -23,7 +23,7 @@ from engine.document_ir import (
 )
 
 from .domain import JobStatus, PIPELINE_STAGES
-from .providers import InferenceProvider, TranslationRequest
+from .providers import GoogleTranslateImagesError, GoogleTranslateImagesProvider, InferenceProvider, TranslationRequest
 from .settings import Settings
 from .store import JobStore
 
@@ -37,6 +37,12 @@ class PipelineRunner:
         self.settings = settings
         self.store = store
         self.inference = inference
+        self.google_images = GoogleTranslateImagesProvider(
+            enabled=settings.google_integration_enabled and settings.image_text_mode == "google_translate_images",
+            cache_dir=settings.work_dir / "google_translate_images_cache",
+            source_lang="en",
+            target_lang="pt",
+        )
         self.settings.ensure_dirs()
 
     def process_job(self, job_id: str) -> dict:
@@ -474,14 +480,14 @@ class PipelineRunner:
         ir.history.append({"at": now_iso(), "event": "translated", "provider": self.inference.name, "model": self.inference.model})
         return ir, metrics
 
-    @staticmethod
-    def _compose_translated_pdf(source: Path, ir: IRDocument, output: Path) -> None:
+    def _compose_translated_pdf(self, source: Path, ir: IRDocument, output: Path) -> None:
         import fitz
 
         output.parent.mkdir(parents=True, exist_ok=True)
         with fitz.open(str(source)) as doc:
             for page_ir in ir.pages:
                 page = doc[page_ir.page_number - 1]
+                self._translate_embedded_images_with_google(doc, page, page_ir)
                 for block in page_ir.blocks:
                     if not block.translated_text or block.translated_text == block.original_text:
                         continue
@@ -496,6 +502,42 @@ class PipelineRunner:
                     rect = fitz.Rect(block.bbox.to_list())
                     _insert_textbox_fit(page, rect, block.translated_text)
             doc.save(str(output), garbage=4, deflate=True)
+
+    def _translate_embedded_images_with_google(self, doc, page, page_ir: IRPage) -> None:
+        if self.settings.image_text_mode != "google_translate_images" or not self.settings.google_integration_enabled:
+            return
+        if "scanned" in page_ir.classification and "hybrid" not in page_ir.classification:
+            return
+
+        try:
+            image_infos = page.get_image_info(xrefs=True)
+        except Exception:
+            image_infos = []
+        seen_xrefs: set[int] = set()
+        for info in image_infos:
+            xref = int(info.get("xref") or 0)
+            if xref <= 0 or xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+            try:
+                extracted = doc.extract_image(xref)
+                img_bytes = extracted.get("image")
+            except Exception:
+                continue
+            if not img_bytes:
+                continue
+            try:
+                translated = self.google_images.translate_image_bytes(img_bytes, source_lang="en", target_lang="pt")
+            except GoogleTranslateImagesError:
+                continue
+            except Exception:
+                continue
+            if not translated:
+                continue
+            try:
+                page.replace_image(xref, stream=translated.image_bytes)
+            except Exception:
+                continue
 
     @staticmethod
     def _create_comparison_pdf(original: Path, translated: Path, output: Path) -> None:

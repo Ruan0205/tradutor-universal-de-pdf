@@ -1,10 +1,43 @@
 import json
+import io
+import tempfile
 import unittest
 
-from translator.providers import MockProvider, OllamaProvider, TranslationRequest
+from PIL import Image
+
+from translator.providers import GoogleTranslateImagesProvider, MockProvider, OllamaProvider, TranslationRequest
+
+
+class FakeGoogleTranslateImagesProvider(GoogleTranslateImagesProvider):
+    def _translate_with_browser(self, image_bytes: bytes, source_lang: str, target_lang: str) -> bytes:
+        image = Image.new("RGB", (32, 16), color=(10, 120, 200))
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue()
 
 
 class ProviderTests(unittest.TestCase):
+    def test_google_translate_images_disabled_does_not_open_browser(self):
+        provider = GoogleTranslateImagesProvider(enabled=False)
+        result = provider.translate_image_bytes(b"not-an-image")
+
+        self.assertIsNone(result)
+
+    def test_google_translate_images_caches_browser_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            provider = FakeGoogleTranslateImagesProvider(cache_dir=tmp)
+            first = provider.translate_image_bytes(b"input-image", source_lang="English", target_lang="Português Brasileiro")
+            second = provider.translate_image_bytes(b"input-image", source_lang="en", target_lang="pt")
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertFalse(first.from_cache)
+            self.assertTrue(second.from_cache)
+            self.assertEqual(first.image_bytes, second.image_bytes)
+            self.assertEqual(first.provider, "google_translate_images")
+            self.assertEqual(second.source_lang, "en")
+            self.assertEqual(second.target_lang, "pt")
+
     def test_mock_provider_is_deterministic(self):
         provider = MockProvider()
         result = provider.translate(TranslationRequest(block_id="b1", text="The spell deals damage."))

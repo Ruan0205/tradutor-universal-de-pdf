@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from .dispatch import dispatch_job
 from .domain import JobStatus
-from .providers import make_inference_provider
+from .providers import GoogleTranslateImagesProvider, make_inference_provider
 from .providers.ocr import OCRmyPDFProvider, RapidOCRProvider, TesseractProvider
 from .settings import Settings, load_settings
 from .store import JobStore, init_store
@@ -223,10 +223,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/providers")
     def providers(_: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
         inference = make_inference_provider(settings)
+        google_images = GoogleTranslateImagesProvider(
+            enabled=settings.google_integration_enabled,
+            cache_dir=settings.work_dir / "google_translate_images_cache",
+        )
         return {
             "inference": inference.health(),
             "ocr": [RapidOCRProvider().health(), TesseractProvider().health(), OCRmyPDFProvider().health()],
             "google_enabled": settings.google_integration_enabled,
+            "image_translation": google_images.health(),
         }
 
     @app.get("/api/status")
@@ -505,7 +510,9 @@ def _legacy_config_defaults(settings: Settings) -> dict:
         "validation_pages": 10,
         "validation_method": "structural",
         "image_text_mode": settings.image_text_mode,
-        "google_translate_images_enabled": False,
+        "google_translate_images_enabled": True,
+        "google_translate_images_timeout_ms": 120000,
+        "google_translate_images_headless": True,
         "compute_backend": "cpu",
         "image_ai_selectable_only": True,
         "image_inpaint_radius": 3,
