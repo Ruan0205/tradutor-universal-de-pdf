@@ -88,6 +88,7 @@ class OllamaProvider:
         max_output_tokens: int | None = None,
         context_tokens: int | None = None,
         num_gpu: int | None = 0,
+        num_thread: int | None = 4,
         keep_alive: str | None = "24h",
     ):
         self.base_url = base_url.rstrip("/")
@@ -99,13 +100,13 @@ class OllamaProvider:
         self.max_output_tokens = max_output_tokens
         self.context_tokens = context_tokens
         self.num_gpu = num_gpu
+        self.num_thread = num_thread
         self.keep_alive = keep_alive
 
     def translate(self, request: TranslationRequest) -> TranslationResult:
         system = (
             "You are a professional English to Brazilian Portuguese translator. "
-            "Return only valid JSON matching this schema: "
-            "{\"block_id\":\"string\",\"translated_text\":\"string\",\"preserved_terms\":[],\"warnings\":[],\"confidence\":0.0}. "
+            "Return only the translated Brazilian Portuguese text, with no JSON, commentary, markdown, or notes. "
             "Preserve RPG proper nouns and conventional untranslated terms. "
             "Use the glossary exactly when a listed term appears. "
             "Keep tables, numbers, dice notation, stat blocks, labels, and line breaks as stable as possible. "
@@ -123,9 +124,10 @@ class OllamaProvider:
         )
         response_text, usage = self._chat(system, user)
         parsed = _extract_json(response_text)
-        if "translated_text" not in parsed or not str(parsed.get("translated_text") or "").strip():
-            raise RuntimeError("Ollama response did not include translated_text")
-        translated = str(parsed["translated_text"]).strip()
+        translated = _translated_text_from_response(parsed, response_text)
+        if not translated:
+            snippet = " ".join(response_text.strip().split())[:180]
+            raise RuntimeError(f"Ollama response did not include translated_text: {snippet}")
         confidence = float(parsed.get("confidence") or 0.75)
         warnings = [str(item) for item in parsed.get("warnings", [])]
         prompt_tokens = int(usage.get("prompt_tokens") or _estimate_tokens(system + user))
@@ -164,6 +166,8 @@ class OllamaProvider:
             options["num_ctx"] = self.context_tokens
         if self.num_gpu is not None:
             options["num_gpu"] = self.num_gpu
+        if self.num_thread is not None:
+            options["num_thread"] = self.num_thread
         request_data: dict[str, object] = {
             "model": self.model,
             "messages": [
@@ -285,7 +289,17 @@ def _extract_json(text: str) -> dict:
         end = text.rfind("}")
         if start >= 0 and end > start:
             return json.loads(text[start : end + 1])
-        raise
+        return {"translated_text": text.strip()}
+
+
+def _translated_text_from_response(parsed: dict, raw_text: str) -> str:
+    for key in ("translated_text", "translation", "translated", "text", "result", "output"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if not parsed and raw_text.strip():
+        return raw_text.strip()
+    return ""
 
 
 def _estimate_tokens(text: str) -> int:
@@ -305,6 +319,7 @@ def make_inference_provider(settings: Settings) -> InferenceProvider:
             max_output_tokens=settings.llm_max_output_tokens,
             context_tokens=settings.llm_context_tokens,
             num_gpu=settings.llm_num_gpu,
+            num_thread=settings.llm_num_thread,
             keep_alive=settings.llm_keep_alive,
         )
     if provider in {"llama.cpp", "llamacpp", "llama"}:

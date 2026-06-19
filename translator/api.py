@@ -612,6 +612,7 @@ def _legacy_config_defaults(settings: Settings) -> dict:
             "top_p": 0.9,
             "num_ctx": settings.llm_context_tokens or 32768,
             "num_gpu": settings.llm_num_gpu if settings.llm_num_gpu is not None else 0,
+            "num_thread": settings.llm_num_thread if settings.llm_num_thread is not None else 4,
         },
         "original_mappings": {},
         "validation_mode": "25%",

@@ -56,6 +56,7 @@ class ProviderTests(unittest.TestCase):
             max_output_tokens=128,
             context_tokens=32768,
             num_gpu=0,
+            num_thread=4,
             keep_alive="24h",
         )
         seen = {}
@@ -107,6 +108,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(seen["payload"]["options"]["num_predict"], 128)
         self.assertEqual(seen["payload"]["options"]["num_ctx"], 32768)
         self.assertEqual(seen["payload"]["options"]["num_gpu"], 0)
+        self.assertEqual(seen["payload"]["options"]["num_thread"], 4)
         self.assertEqual(seen["payload"]["keep_alive"], "24h")
         self.assertEqual(result.prompt_tokens, 12)
         self.assertEqual(result.completion_tokens, 8)
@@ -138,6 +140,33 @@ class ProviderTests(unittest.TestCase):
                 provider.translate(TranslationRequest(block_id="b1", text="The wizard casts a spell."))
         finally:
             inference.urllib.request.urlopen = original
+
+    def test_ollama_provider_accepts_common_translation_key(self):
+        provider = OllamaProvider("http://localhost:11434", "qwen3.5:9b")
+
+        def fake_urlopen(request, timeout):
+            class Response:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self):
+                    return json.dumps({"message": {"content": json.dumps({"translation": "O dragao ataca."})}}).encode("utf-8")
+
+            return Response()
+
+        import translator.providers.inference as inference
+
+        original = inference.urllib.request.urlopen
+        try:
+            inference.urllib.request.urlopen = fake_urlopen
+            result = provider.translate(TranslationRequest(block_id="b1", text="The dragon attacks."))
+        finally:
+            inference.urllib.request.urlopen = original
+
+        self.assertEqual(result.translated_text, "O dragao ataca.")
 
 
 if __name__ == "__main__":

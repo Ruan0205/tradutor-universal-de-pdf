@@ -6,6 +6,7 @@ import html
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import time
 from typing import Iterator
@@ -414,6 +415,10 @@ class PipelineRunner:
             for block in page.blocks:
                 if not block.original_text.strip():
                     continue
+                if not _should_translate_block_text(block.original_text):
+                    block.status = "skipped_non_translatable"
+                    block.warnings.append("skipped_non_translatable_or_ocr_noise")
+                    continue
                 cached = self.store.get_translation_memory(block.original_text)
                 if cached:
                     block.translated_text = cached["translated_text"]
@@ -560,7 +565,18 @@ class PipelineRunner:
 
     @staticmethod
     def _validate_text(ir: IRDocument) -> dict:
-        blocks = [block for page in ir.pages for block in page.blocks if block.original_text.strip()]
+        blocks = [
+            block
+            for page in ir.pages
+            for block in page.blocks
+            if block.original_text.strip() and not str(block.status).startswith("skipped_")
+        ]
+        skipped = [
+            block.block_id
+            for page in ir.pages
+            for block in page.blocks
+            if str(block.status).startswith("skipped_")
+        ]
         translated = [block for block in blocks if block.translated_text]
         untranslated = [
             block.block_id
@@ -600,6 +616,7 @@ class PipelineRunner:
             "blocks_total": len(blocks),
             "blocks_translated": len(translated),
             "unchanged_blocks": len(untranslated),
+            "skipped_blocks": len(skipped),
             "pages_without_text_blocks": len(empty_pages),
             "issues": issues,
             "needs_review": needs_review,
@@ -760,6 +777,27 @@ def _page_dict_with_ocr(page) -> dict:
     return page_dict if _page_dict_has_text(page_dict) else page.get_text("dict")
 
 
+def _should_translate_block_text(text: str) -> bool:
+    normalized = _normalized_language_text(text)
+    if len(normalized) < 3:
+        return False
+    words = normalized.split()
+    if not words:
+        return False
+    alpha_chars = sum(ch.isalpha() for ch in normalized)
+    if alpha_chars < 4:
+        return False
+    marker_hits = _english_marker_count(normalized)
+    if marker_hits:
+        return True
+    long_words = [word for word in words if len(word) >= 4]
+    if len(long_words) >= 8 and len(normalized) >= 80:
+        return True
+    if len(long_words) >= 5 and re.search(r"[.!?:;]", text):
+        return True
+    return False
+
+
 def _translation_is_unchanged(source: str, translated: str) -> bool:
     source_norm = _normalized_language_text(source)
     translated_norm = _normalized_language_text(translated)
@@ -792,6 +830,10 @@ def _has_meaningful_alpha_text(text: str) -> bool:
 
 
 def _looks_english(text: str) -> bool:
+    return _english_marker_count(text) >= 2
+
+
+def _english_marker_count(text: str) -> int:
     markers = {
         "the",
         "and",
@@ -809,9 +851,28 @@ def _looks_english(text: str) -> bool:
         "attack",
         "saving",
         "throws",
+        "armor",
+        "challenge",
+        "fortitude",
+        "reflex",
+        "will",
+        "strength",
+        "dexterity",
+        "constitution",
+        "intelligence",
+        "wisdom",
+        "charisma",
+        "monster",
+        "feat",
+        "skill",
+        "special",
+        "ability",
+        "speed",
+        "hit",
+        "points",
     }
     words = set(text.split())
-    return len(words & markers) >= 2
+    return len(words & markers)
 
 
 def _looks_portuguese(text: str) -> bool:

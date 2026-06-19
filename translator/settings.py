@@ -46,6 +46,7 @@ class Settings:
     llm_max_output_tokens: Optional[int] = None
     llm_context_tokens: Optional[int] = 32768
     llm_num_gpu: Optional[int] = 0
+    llm_num_thread: Optional[int] = 4
     llm_keep_alive: Optional[str] = "24h"
     llm_reasoning_mode: str = "off"
     job_dispatcher: str = "inline"
@@ -136,6 +137,11 @@ def load_settings() -> Settings:
             if os.environ.get("LLM_NUM_GPU", "").strip()
             else 0
         ),
+        llm_num_thread=(
+            _int_env("LLM_NUM_THREAD", 4)
+            if os.environ.get("LLM_NUM_THREAD", "").strip()
+            else 4
+        ),
         llm_keep_alive=os.environ.get("LLM_KEEP_ALIVE", "24h").strip() or None,
         llm_reasoning_mode=os.environ.get("LLM_REASONING_MODE", "off").strip().lower() or "off",
         job_dispatcher=os.environ.get("JOB_DISPATCHER", "inline").strip().lower() or "inline",
@@ -176,6 +182,8 @@ def _apply_dashboard_config(settings: Settings) -> Settings:
         updates["llm_context_tokens"] = int(options["num_ctx"])
     if "num_gpu" in options and str(options["num_gpu"]).strip():
         updates["llm_num_gpu"] = int(options["num_gpu"])
+    if "num_thread" in options and str(options["num_thread"]).strip():
+        updates["llm_num_thread"] = int(options["num_thread"])
     if "num_predict" in options and str(options["num_predict"]).strip():
         updates["llm_max_output_tokens"] = int(options["num_predict"])
     return replace(settings, **updates) if updates else settings

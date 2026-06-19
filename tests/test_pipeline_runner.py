@@ -8,7 +8,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from engine.document_ir import BBox, IRBlock, IRDocument, IRPage
-from translator.pipeline import PipelineRunner
+from translator.pipeline import PipelineRunner, _should_translate_block_text
 from translator.providers import MockProvider
 from translator.settings import Settings
 from translator.store import init_store
@@ -152,6 +152,10 @@ class PipelineRunnerTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["unchanged_blocks"], 1)
+
+    def test_ocr_noise_is_not_sent_to_translation(self):
+        self.assertFalse(_should_translate_block_text("LLY A. gsag Po a4 its aff Gee ARsa fCb wage Kee eee"))
+        self.assertTrue(_should_translate_block_text("Armor Class 18 Hit Points 120 The creature makes two attacks."))
 
 
 if __name__ == "__main__":
