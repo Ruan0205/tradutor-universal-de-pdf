@@ -7,6 +7,7 @@ from reportlab.pdfgen import canvas
 
 from translator.api import create_app, get_settings
 from translator.settings import Settings
+from translator.store import init_store
 
 
 def make_pdf(path: Path) -> None:
@@ -96,6 +97,33 @@ class ApiV1Tests(unittest.TestCase):
             translated = response.json()["books"]["translated"]
             self.assertEqual([item["name"] for item in translated], ["book.traduzido.pdf"])
             self.assertEqual(response.json()["books"]["counts"]["translated"], 1)
+
+    def test_legacy_queue_next_and_order_control_untranslated_books(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}", job_dispatcher="manual")
+            settings.ensure_dirs()
+            first = settings.input_dir / "first.pdf"
+            second = settings.input_dir / "second.pdf"
+            make_pdf(first)
+            make_pdf(second)
+            store = init_store(settings.database_url)
+            store.submit_pdf(first)
+            store.submit_pdf(second)
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            next_response = client.post("/api/queue/next", json={"filename": "second.pdf"})
+            status_after_next = client.get("/api/status").json()
+            order_response = client.post("/api/queue/order", json={"order": ["first.pdf", "second.pdf"]})
+            status_after_order = client.get("/api/status").json()
+
+            self.assertEqual(next_response.status_code, 200)
+            self.assertEqual(status_after_next["books"]["input"][0]["name"], "second.pdf")
+            self.assertEqual(order_response.status_code, 200)
+            self.assertEqual([item["name"] for item in status_after_order["books"]["input"][:2]], ["first.pdf", "second.pdf"])
+            self.assertEqual(status_after_order["books"]["counts"]["untranslated"], 2)
 
 
 if __name__ == "__main__":

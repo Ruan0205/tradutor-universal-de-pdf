@@ -376,6 +376,50 @@ def create_app() -> FastAPI:
         _legacy_save_config(settings, config)
         return {"ok": True, "config": config}
 
+    @app.post("/api/queue/next")
+    async def legacy_queue_next(
+        request: Request,
+        _: None = Depends(require_auth),
+        store: JobStore = Depends(get_store),
+    ):
+        data = await request.json()
+        filename = Path(str(data.get("filename") or "")).name
+        if not filename:
+            raise HTTPException(status_code=400, detail="filename is required")
+        queued = [job for job in store.list_jobs(limit=1000) if job["status"] == JobStatus.QUEUED.value]
+        target = next((job for job in queued if job["original_filename"] == filename or job["id"] == filename), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="Queued book not found")
+        max_priority = max([int(job.get("priority") or 0) for job in queued] or [0])
+        updated = store.update_job(target["id"], priority=max_priority + 100)
+        return {"ok": True, "job": updated}
+
+    @app.post("/api/queue/order")
+    async def legacy_queue_order(
+        request: Request,
+        _: None = Depends(require_auth),
+        settings: Settings = Depends(get_settings),
+        store: JobStore = Depends(get_store),
+    ):
+        data = await request.json()
+        order = [Path(str(item)).name for item in data.get("order", []) if str(item).strip()]
+        if not order:
+            raise HTTPException(status_code=400, detail="order is required")
+        queued = [job for job in store.list_jobs(limit=1000) if job["status"] == JobStatus.QUEUED.value]
+        by_name = {job["original_filename"]: job for job in queued}
+        base = len(order) * 10
+        updated = []
+        for index, name in enumerate(order):
+            job = by_name.get(name)
+            if not job:
+                continue
+            updated.append(store.update_job(job["id"], priority=base - index))
+        config = _legacy_load_config(settings)
+        config["sort_order"] = "custom"
+        config["custom_order"] = order
+        _legacy_save_config(settings, config)
+        return {"ok": True, "updated": updated, "config": config}
+
     @app.post("/api/set-original")
     async def legacy_set_original(request: Request, _: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
         data = await request.json()
@@ -556,9 +600,13 @@ def _legacy_status(settings: Settings, store: JobStore) -> dict:
 
 def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:
     validations = _legacy_validations(settings)
-    jobs_by_source = {Path(job["source_path"]).stem: job for job in jobs or []}
+    jobs = jobs or []
+    jobs_by_source = {Path(job["source_path"]).stem: job for job in jobs}
+    input_books = _legacy_untranslated_books(settings, jobs)
+    translated_books = _list_pdfs(settings.output_dir, sort_mode="mtime_desc", suffix=".traduzido.pdf")
     return {
-        "input": _list_pdfs(settings.input_dir),
+        "input": input_books,
+        "untranslated": input_books,
         "translating": [],
         "translated": [
             {
@@ -567,18 +615,69 @@ def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:
                 "timing": _book_timing(jobs_by_source.get(_source_stem_from_output(item["name"]))),
                 "tokens": _book_tokens(jobs_by_source.get(_source_stem_from_output(item["name"]))),
             }
-            for item in _list_pdfs(settings.output_dir, sort_mode="mtime_desc", suffix=".traduzido.pdf")
+            for item in translated_books
         ],
         "originals": _list_pdfs(settings.originals_dir),
         "validations": validations,
         "mapping": {},
         "counts": {
-            "input": len(_list_pdfs(settings.input_dir)),
+            "input": len(input_books),
+            "untranslated": len(input_books),
             "translating": 0,
-            "translated": len(_list_pdfs(settings.output_dir, suffix=".traduzido.pdf")),
+            "translated": len(translated_books),
             "originals": len(_list_pdfs(settings.originals_dir)),
         },
     }
+
+
+def _legacy_untranslated_books(settings: Settings, jobs: list[dict]) -> list[dict]:
+    translated_stems = {
+        _source_stem_from_output(path.name)
+        for path in settings.output_dir.glob("*.traduzido.pdf")
+        if path.is_file()
+    }
+    queued = [job for job in jobs if job["status"] == JobStatus.QUEUED.value]
+    queued.sort(key=lambda job: (-int(job.get("priority") or 0), str(job.get("created_at") or "")))
+
+    seen: set[str] = set()
+    items: list[dict] = []
+    for job in queued:
+        source = Path(job["source_path"])
+        stem = source.stem
+        if stem in translated_stems or job["original_filename"] in seen:
+            continue
+        seen.add(job["original_filename"])
+        items.append(
+            {
+                "name": job["original_filename"],
+                "size_mb": _file_size_mb(source),
+                "mtime": source.stat().st_mtime if source.exists() else 0,
+                "modified": (
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(source.stat().st_mtime))
+                    if source.exists()
+                    else ""
+                ),
+                "job_id": job["id"],
+                "status": job["status"],
+                "priority": int(job.get("priority") or 0),
+                "queued": True,
+            }
+        )
+
+    config = _legacy_load_config(settings)
+    input_items = _list_pdfs(settings.input_dir)
+    input_items = [item for item in input_items if Path(item["name"]).stem not in translated_stems and item["name"] not in seen]
+    sort_order = config.get("sort_order", "smallest_first")
+    if sort_order == "largest_first":
+        input_items.sort(key=lambda item: item["size_mb"], reverse=True)
+    elif sort_order == "custom":
+        order_map = {name: index for index, name in enumerate(config.get("custom_order", []))}
+        input_items.sort(key=lambda item: order_map.get(item["name"], 999999))
+    else:
+        input_items.sort(key=lambda item: item["size_mb"])
+    for item in input_items:
+        item["queued"] = False
+    return items + input_items
 
 
 def _legacy_ollama_status(settings: Settings) -> dict:

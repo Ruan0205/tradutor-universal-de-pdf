@@ -353,6 +353,11 @@ button { cursor:pointer; font-family:inherit; border:none; }
       <h3>📋 Fila de Tradução (<span id="queueCount">0</span>)</h3>
       <div id="queueTable" style="overflow-x:auto;"></div>
     </div>
+
+    <div class="section">
+      <h3>Livros Nao Traduzidos (<span id="untranslatedCount">0</span>)</h3>
+      <div id="untranslatedTable" style="overflow-x:auto;"></div>
+    </div>
   </div>
 
   <!-- ===== MODELS PAGE ===== -->
@@ -904,8 +909,15 @@ async function changeSortOrder() {
 async function saveCustomOrder() {
   const items = document.querySelectorAll('#customOrderList .drag-row');
   const order = Array.from(items).map(el => el.dataset.name);
-  const r = await api('POST', '/api/order', { sort_order: 'custom', custom_order: order });
-  toast(r.ok ? 'Ordem personalizada salva!' : 'Erro', !r.ok);
+  const r = await api('POST', '/api/queue/order', { order });
+  toast(r.ok ? 'Ordem da fila salva!' : 'Erro', !r.ok);
+  refresh();
+}
+
+async function apiQueueNext(filename) {
+  const r = await api('POST', '/api/queue/next', { filename });
+  toast(r.ok ? 'Livro definido como proximo da fila.' : (r.detail || r.error || 'Erro'), !r.ok);
+  refresh();
 }
 
 async function setManualOriginal() {
@@ -1208,12 +1220,14 @@ function renderBooks() {
   const books = DATA.books || {};
   const translated = books.translated || [];
   const input = books.input || [];
+  const untranslated = books.untranslated || input;
   const cfg = DATA.config || {};
 
   document.getElementById('translatedCount').textContent = translated.length;
   document.getElementById('queueCount').textContent = input.length;
+  const untranslatedCount = document.getElementById('untranslatedCount');
+  if (untranslatedCount) untranslatedCount.textContent = untranslated.length;
 
-  // Sort order
   const sortSel = document.getElementById('sortOrder');
   if (sortSel.value !== (cfg.sort_order || 'smallest_first')) {
     sortSel.value = cfg.sort_order || 'smallest_first';
@@ -1221,7 +1235,6 @@ function renderBooks() {
   document.getElementById('customOrderArea').style.display = cfg.sort_order === 'custom' ? '' : 'none';
   document.getElementById('sortInfo').textContent = input.length ? `${input.length} livros na fila` : '';
 
-  // Translated table
   if (translated.length) {
     let rows = translated.map(b => {
       const v = b.validation;
@@ -1234,34 +1247,36 @@ function renderBooks() {
           <button class="btn btn-sm btn-secondary" onclick="viewBook('${esc(b.name)}')" title="Visualizar na ferramenta">Ver</button>
           <button class="btn btn-sm btn-secondary" onclick="openTranslatedPdf('${esc(b.name)}')" title="Abrir PDF em nova aba">Abrir</button>
           <button class="btn btn-sm btn-primary" onclick="downloadTranslatedPdf('${esc(b.name)}')" title="Baixar PDF traduzido">Baixar</button>
-          <button class="btn btn-sm btn-secondary" onclick="apiRevalidate('${esc(b.name)}')" title="Revalidar">🔄</button>
-          <button class="btn btn-sm btn-warning" onclick="apiRetranslate('${esc(b.name)}')" title="Retraduzir (próximo na fila)">🔁</button>
+          <button class="btn btn-sm btn-secondary" onclick="apiRevalidate('${esc(b.name)}')" title="Revalidar">Revalidar</button>
+          <button class="btn btn-sm btn-warning" onclick="apiRetranslate('${esc(b.name)}')" title="Retraduzir como proximo na fila">Retraduzir</button>
         </td>
       </tr>`;
     }).join('');
     document.getElementById('translatedTable').innerHTML = `<table class="tbl"><thead><tr>
-      <th>Livro Traduzido</th><th>Tamanho</th><th>Duração</th><th>Validação</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table>`;
+      <th>Livro Traduzido</th><th>Tamanho</th><th>Duracao</th><th>Validacao</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
   } else {
     document.getElementById('translatedTable').innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Nenhum livro traduzido</div>';
   }
 
-  // Queue table
   if (input.length) {
     let rows = input.map((b, i) => `<tr>
-      <td><span class="drag-handle">⠿</span> ${i+1}.</td>
-      <td>${b.name}</td><td>${b.size_mb} MB</td>
+      <td>${i+1}.</td>
+      <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
+      <td>${b.size_mb} MB</td>
+      <td>${b.queued ? '<span class="badge pending">Fila</span>' : '<span class="badge">Arquivo</span>'}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="apiQueueNext('${esc(b.name)}')">Proximo</button></td>
     </tr>`).join('');
     document.getElementById('queueTable').innerHTML = `<table class="tbl"><thead><tr>
-      <th>#</th><th>PDF na Fila</th><th>Tamanho</th></tr></thead><tbody>${rows}</tbody></table>`;
+      <th>#</th><th>PDF na Fila</th><th>Tamanho</th><th>Status</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
 
-    // Custom order list (for drag reorder)
     if (cfg.sort_order === 'custom') {
       const list = document.getElementById('customOrderList');
       list.innerHTML = input.map(b =>
         `<div class="drag-row" data-name="${esc(b.name)}" draggable="true" style="display:flex;align-items:center;padding:8px 12px;background:var(--bg3);border:1px solid var(--bg4);border-radius:6px;margin-bottom:4px;cursor:grab;">
-          <span class="drag-handle">⠿</span>
+          <span class="drag-handle">::</span>
           <span style="flex:1;margin-left:8px;font-size:13px;">${b.name}</span>
           <span style="color:var(--text2);font-size:12px;">${b.size_mb} MB</span>
+          <button class="btn btn-sm btn-secondary" onclick="apiQueueNext('${esc(b.name)}')" style="margin-left:10px;">Proximo</button>
         </div>`
       ).join('');
       setupDragReorder(list);
@@ -1269,8 +1284,24 @@ function renderBooks() {
   } else {
     document.getElementById('queueTable').innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Fila vazia</div>';
   }
-}
 
+  const unTable = document.getElementById('untranslatedTable');
+  if (unTable) {
+    if (untranslated.length) {
+      let rows = untranslated.map((b, i) => `<tr>
+        <td>${i+1}.</td>
+        <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
+        <td>${b.size_mb} MB</td>
+        <td>${b.queued ? '<span class="badge pending">Na fila</span>' : '<span class="badge">Nao enfileirado</span>'}</td>
+        <td>${b.queued ? `<button class="btn btn-sm btn-primary" onclick="apiQueueNext('${esc(b.name)}')">Proximo</button>` : ''}</td>
+      </tr>`).join('');
+      unTable.innerHTML = `<table class="tbl"><thead><tr>
+        <th>#</th><th>Livro nao traduzido</th><th>Tamanho</th><th>Status</th><th>Acoes</th></tr></thead><tbody>${rows}</tbody></table>`;
+    } else {
+      unTable.innerHTML = '<div style="text-align:center;color:var(--text3);padding:20px;">Nenhum livro nao traduzido</div>';
+    }
+  }
+}
 function renderModels() {
   const o = DATA.ollama || {};
   const cfg = DATA.config || {};
