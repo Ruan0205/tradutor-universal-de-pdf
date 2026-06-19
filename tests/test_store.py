@@ -109,6 +109,21 @@ class StoreTests(unittest.TestCase):
             self.assertIsNone(claimed_second)
             self.assertIsNone(claimed_next)
 
+    def test_active_paused_job_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            active_pdf = root / "active.pdf"
+            waiting_pdf = root / "waiting.pdf"
+            make_pdf(active_pdf)
+            make_pdf(waiting_pdf)
+            store = init_store(f"sqlite:///{root / 'jobs.db'}")
+            active = store.submit_pdf(active_pdf)
+            store.submit_pdf(waiting_pdf)
+
+            store.update_job(active["id"], status="paused", current_stage="translation", current_page=12, total_pages=226)
+
+            self.assertTrue(store.has_active_paused_job())
+
 
 if __name__ == "__main__":
     unittest.main()

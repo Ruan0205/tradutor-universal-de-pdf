@@ -199,6 +199,19 @@ class JobStore:
                 ).scalars().first()
             )
 
+    def has_active_paused_job(self) -> bool:
+        with self.session() as session:
+            return bool(
+                session.execute(
+                    select(JobRecord.id)
+                    .where(
+                        JobRecord.status == JobStatus.PAUSED.value,
+                        (JobRecord.current_page > 0) | (JobRecord.total_pages > 0) | (JobRecord.current_stage.is_not(None)),
+                    )
+                    .limit(1)
+                ).scalars().first()
+            )
+
     def claim_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self.session() as session:
             running = session.execute(

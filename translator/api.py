@@ -293,7 +293,9 @@ def create_app() -> FastAPI:
             if path.is_file()
         }
 
-        for job in store.list_jobs(limit=1000):
+        jobs = store.list_jobs(limit=1000)
+        active_paused = _select_legacy_paused_job(jobs)
+        for job in jobs:
             source = Path(job["source_path"])
             if source.stem in translated_stems:
                 continue
@@ -303,8 +305,7 @@ def create_app() -> FastAPI:
                 JobStatus.FAILED.value,
                 JobStatus.CANCELLED.value,
                 JobStatus.NEEDS_REVIEW.value,
-                JobStatus.PAUSED.value,
-            }:
+            } or (active_paused and job["id"] == active_paused["id"]):
                 restarted_job = store.update_job(
                     job["id"],
                     status=JobStatus.QUEUED.value,
@@ -374,7 +375,7 @@ def create_app() -> FastAPI:
     def legacy_pause(_: None = Depends(require_auth), store: JobStore = Depends(get_store)):
         changed = []
         for job in store.list_jobs(limit=1000):
-            if job["status"] in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+            if job["status"] == JobStatus.RUNNING.value:
                 changed.append(store.update_job(job["id"], status=JobStatus.PAUSED.value))
         return {"ok": True, "jobs": changed}
 
@@ -385,10 +386,10 @@ def create_app() -> FastAPI:
         store: JobStore = Depends(get_store),
     ):
         changed = []
-        for job in store.list_jobs(limit=1000):
-            if job["status"] == JobStatus.PAUSED.value:
-                resumed = store.update_job(job["id"], status=JobStatus.QUEUED.value, error=None)
-                changed.append(resumed)
+        paused = _select_legacy_paused_job(store.list_jobs(limit=1000))
+        if paused:
+            resumed = store.update_job(paused["id"], status=JobStatus.QUEUED.value, error=None)
+            changed.append(resumed)
         dispatch_next_if_idle(settings)
         return {"ok": True, "jobs": changed}
 
@@ -642,7 +643,7 @@ def _legacy_save_config(settings: Settings, config: dict) -> None:
 def _legacy_status(settings: Settings, store: JobStore) -> dict:
     jobs = store.list_jobs(limit=1000)
     running = next((job for job in jobs if job["status"] == JobStatus.RUNNING.value), None)
-    paused = next((job for job in jobs if job["status"] == JobStatus.PAUSED.value), None)
+    paused = _select_legacy_paused_job(jobs)
     queued = [job for job in jobs if job["status"] == JobStatus.QUEUED.value]
     completed = [job for job in jobs if job["status"] in {JobStatus.COMPLETED.value, JobStatus.NEEDS_REVIEW.value}]
     status = "running" if running else "paused" if paused else "idle"
@@ -704,6 +705,29 @@ def _legacy_status(settings: Settings, store: JobStore) -> dict:
         "validator_alive": True,
         "pipeline_alive": True,
     }
+
+
+def _select_legacy_paused_job(jobs: list[dict]) -> dict | None:
+    paused = [job for job in jobs if job["status"] == JobStatus.PAUSED.value]
+    if not paused:
+        return None
+    return max(paused, key=_legacy_job_activity_score)
+
+
+def _legacy_job_activity_score(job: dict) -> tuple[int, str]:
+    metadata = job.get("metadata", {}) or {}
+    metrics = metadata.get("translation_metrics", {}) or {}
+    score = 0
+    if job.get("current_page"):
+        score += 100_000 + int(job.get("current_page") or 0)
+    if job.get("total_pages"):
+        score += 50_000 + int(job.get("total_pages") or 0)
+    if job.get("current_stage"):
+        score += 10_000
+    if metadata.get("started_at"):
+        score += 1_000
+    score += int(metrics.get("blocks") or 0)
+    return score, str(job.get("updated_at") or "")
 
 
 def _legacy_books(settings: Settings, jobs: list[dict] | None = None) -> dict:

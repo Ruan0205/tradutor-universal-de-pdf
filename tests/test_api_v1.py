@@ -177,6 +177,69 @@ class ApiV1Tests(unittest.TestCase):
             self.assertFalse(response.json()["ok"])
             self.assertIn("Ollama", response.json()["error"])
 
+    def test_legacy_status_prefers_paused_job_with_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}", job_dispatcher="manual")
+            settings.ensure_dirs()
+            active_pdf = settings.input_dir / "MonsterManualV.pdf"
+            other_pdf = settings.input_dir / "other.pdf"
+            make_pdf(active_pdf)
+            make_pdf(other_pdf)
+            store = init_store(settings.database_url)
+            active = store.submit_pdf(active_pdf)
+            other = store.submit_pdf(other_pdf)
+            store.update_job(
+                active["id"],
+                status=JobStatus.PAUSED.value,
+                current_stage="translation",
+                current_page=27,
+                total_pages=226,
+            )
+            store.update_job(other["id"], status=JobStatus.PAUSED.value)
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            response = client.get("/api/status")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["state"]["current_book"]["filename"], "MonsterManualV.pdf")
+            self.assertEqual(response.json()["state"]["current_page"], 27)
+
+    def test_legacy_pause_and_resume_affect_only_active_book(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}", job_dispatcher="manual")
+            settings.ensure_dirs()
+            active_pdf = settings.input_dir / "active.pdf"
+            queued_pdf = settings.input_dir / "queued.pdf"
+            make_pdf(active_pdf)
+            make_pdf(queued_pdf)
+            store = init_store(settings.database_url)
+            active = store.submit_pdf(active_pdf)
+            queued = store.submit_pdf(queued_pdf)
+            store.update_job(active["id"], status=JobStatus.RUNNING.value, current_stage="translation", current_page=3)
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            paused = client.post("/api/pause")
+            active_after_pause = store.get_job(active["id"])
+            queued_after_pause = store.get_job(queued["id"])
+            resumed = client.post("/api/resume")
+            active_after_resume = store.get_job(active["id"])
+            queued_after_resume = store.get_job(queued["id"])
+
+            self.assertEqual(paused.status_code, 200)
+            self.assertEqual(len(paused.json()["jobs"]), 1)
+            self.assertEqual(active_after_pause["status"], JobStatus.PAUSED.value)
+            self.assertEqual(queued_after_pause["status"], JobStatus.QUEUED.value)
+            self.assertEqual(resumed.status_code, 200)
+            self.assertEqual(len(resumed.json()["jobs"]), 1)
+            self.assertEqual(active_after_resume["status"], JobStatus.QUEUED.value)
+            self.assertEqual(queued_after_resume["status"], JobStatus.QUEUED.value)
+
 
 if __name__ == "__main__":
     unittest.main()

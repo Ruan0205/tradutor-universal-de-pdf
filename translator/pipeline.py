@@ -33,6 +33,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+class PipelinePaused(Exception):
+    pass
+
+
+class PipelineCancelled(Exception):
+    pass
+
+
 class PipelineRunner:
     def __init__(self, settings: Settings, store: JobStore, inference: InferenceProvider):
         self.settings = settings
@@ -69,10 +77,12 @@ class PipelineRunner:
         artifacts: dict[str, Path] = {}
 
         try:
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "global_analysis"):
                 page_count = self._count_pages(source)
                 self.store.update_job(job_id, total_pages=page_count, progress=8.0)
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "page_classification"):
                 classification_path = job_dir / "page_classification.json"
                 classifications = self._classify_pages(source)
@@ -81,6 +91,7 @@ class PipelineRunner:
                 self.store.add_artifact(job_id, "page_classification", classification_path)
                 self.store.update_job(job_id, progress=16.0)
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "digital_extraction"):
                 ir = self._build_ir(job, source, classifications)
                 ir_path = job_dir / f"{source.stem}.ir.json"
@@ -104,6 +115,7 @@ class PipelineRunner:
                 ],
             )
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "translation"):
                 translated_ir, translation_metrics = self._translate_ir(ir, job_id)
                 translated_ir_path = job_dir / f"{source.stem}.translated.ir.json"
@@ -130,6 +142,7 @@ class PipelineRunner:
                 ],
             )
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "pdf_generation"):
                 translated_pdf = job_dir / f"{source.stem}.traduzido.pdf"
                 self._compose_translated_pdf(source, translated_ir, translated_pdf)
@@ -137,6 +150,7 @@ class PipelineRunner:
                 self.store.add_artifact(job_id, "translated_pdf", translated_pdf)
                 self.store.update_job(job_id, progress=74.0)
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "text_validation"):
                 text_report = self._validate_text(translated_ir)
                 text_report_path = job_dir / "text_validation.json"
@@ -144,6 +158,7 @@ class PipelineRunner:
                 artifacts["text_validation"] = text_report_path
                 self.store.add_artifact(job_id, "text_validation", text_report_path)
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "structural_validation"):
                 structural_report = self._validate_structure(translated_ir)
                 structural_report_path = job_dir / "structural_validation.json"
@@ -151,6 +166,7 @@ class PipelineRunner:
                 artifacts["structural_validation"] = structural_report_path
                 self.store.add_artifact(job_id, "structural_validation", structural_report_path)
 
+            self._ensure_job_active(job_id)
             with self.stage(job_id, "visual_validation"):
                 visual_report = self._validate_visual(translated_ir)
                 visual_report_path = job_dir / "visual_validation.json"
@@ -250,6 +266,10 @@ class PipelineRunner:
             )
             return final_job
         except Exception as exc:
+            if isinstance(exc, PipelinePaused):
+                return self.store.update_job(job_id, status=JobStatus.PAUSED.value, error=None)
+            if isinstance(exc, PipelineCancelled):
+                return self.store.update_job(job_id, status=JobStatus.CANCELLED.value, error=None)
             self.store.update_job(job_id, status=JobStatus.FAILED.value, error=str(exc))
             raise
 
@@ -259,6 +279,12 @@ class PipelineRunner:
         self.store.set_stage_running(job_id, name)
         try:
             yield
+        except PipelinePaused:
+            self.store.set_stage_skipped(job_id, name, reason="Paused by user")
+            raise
+        except PipelineCancelled:
+            self.store.set_stage_skipped(job_id, name, reason="Cancelled by user")
+            raise
         except Exception as exc:
             duration = int((time.perf_counter() - start) * 1000)
             self.store.set_stage_failed(job_id, name, str(exc), duration_ms=duration)
@@ -268,9 +294,19 @@ class PipelineRunner:
 
     def _complete_noop_stages(self, job_id: str, stage_names: list[str]) -> None:
         for name in stage_names:
+            self._ensure_job_active(job_id)
             if name in PIPELINE_STAGES:
                 self.store.set_stage_running(job_id, name)
                 self.store.set_stage_completed(job_id, name)
+
+    def _ensure_job_active(self, job_id: str) -> None:
+        job = self.store.get_job(job_id)
+        if not job:
+            raise KeyError(f"Unknown job: {job_id}")
+        if job["status"] == JobStatus.PAUSED.value:
+            raise PipelinePaused()
+        if job["status"] == JobStatus.CANCELLED.value:
+            raise PipelineCancelled()
 
     @staticmethod
     def _count_pages(path: Path) -> int:
@@ -411,8 +447,12 @@ class PipelineRunner:
         metrics = _empty_translation_metrics()
         for page in ir.pages:
             if job_id:
+                self._ensure_job_active(job_id)
+            if job_id:
                 self.store.update_job(job_id, current_page=page.page_number)
             for block in page.blocks:
+                if job_id:
+                    self._ensure_job_active(job_id)
                 if not block.original_text.strip():
                     continue
                 if not _should_translate_block_text(block.original_text):
@@ -443,6 +483,8 @@ class PipelineRunner:
                     continue
 
                 result = self._translate_block(block, glossary_terms)
+                if job_id:
+                    self._ensure_job_active(job_id)
                 block.translated_text = result.translated_text
                 block.translation_provider = result.provider
                 block.translation_model = result.model
