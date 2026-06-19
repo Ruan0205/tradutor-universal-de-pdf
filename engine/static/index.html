@@ -747,6 +747,16 @@ async function apiStop() { const r = await api('POST', '/api/stop'); toast(r.ok 
 async function apiPause() { const r = await api('POST', '/api/pause'); toast(r.ok ? 'Pipeline pausado.' : r.error, !r.ok); refresh(); }
 async function apiResume() { const r = await api('POST', '/api/resume'); toast(r.ok ? 'Pipeline retomado!' : r.error, !r.ok); refresh(); }
 async function apiOpenDir(dir) { await api('POST', '/api/open-directory', { directory: dir }); }
+function translatedPdfUrl(name, download = false) {
+  const suffix = download ? '?download=1' : '';
+  return '/pdf/translated/' + encodeURIComponent(name) + suffix;
+}
+function openTranslatedPdf(name) {
+  window.open(translatedPdfUrl(name), '_blank', 'noopener');
+}
+function downloadTranslatedPdf(name) {
+  window.location.href = translatedPdfUrl(name, true);
+}
 async function apiSetModel(model) { const r = await api('POST', '/api/model', { model }); toast(r.ok ? `Modelo alterado: ${model}` : r.error, !r.ok); refresh(); }
 
 async function apiRetranslate(filename) {
@@ -1221,7 +1231,9 @@ function renderBooks() {
         <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(b.name)}">${b.name}</td>
         <td>${b.size_mb} MB</td><td>${dur}</td><td>${vBadge}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="viewBook('${esc(b.name)}')">👁</button>
+          <button class="btn btn-sm btn-secondary" onclick="viewBook('${esc(b.name)}')" title="Visualizar na ferramenta">Ver</button>
+          <button class="btn btn-sm btn-secondary" onclick="openTranslatedPdf('${esc(b.name)}')" title="Abrir PDF em nova aba">Abrir</button>
+          <button class="btn btn-sm btn-primary" onclick="downloadTranslatedPdf('${esc(b.name)}')" title="Baixar PDF traduzido">Baixar</button>
           <button class="btn btn-sm btn-secondary" onclick="apiRevalidate('${esc(b.name)}')" title="Revalidar">🔄</button>
           <button class="btn btn-sm btn-warning" onclick="apiRetranslate('${esc(b.name)}')" title="Retraduzir (próximo na fila)">🔁</button>
         </td>
@@ -1409,6 +1421,8 @@ function renderValidator() {
         <div style="width:120px;margin:0 12px;"><div style="background:var(--bg3);border-radius:4px;height:8px;overflow:hidden;">
           <div style="width:${v.rate}%;height:100%;background:var(--${cls});border-radius:4px;"></div></div></div>
         <span class="badge ${v.result.toLowerCase()}">${v.result} ${v.rate}%</span>
+        <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="openTranslatedPdf('${esc(name)}')" title="Abrir PDF">Abrir</button>
+        <button class="btn btn-sm btn-primary" style="margin-left:8px;" onclick="downloadTranslatedPdf('${esc(name)}')" title="Baixar PDF">Baixar</button>
         <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="apiRevalidate('${esc(name)}')" title="Revalidar">🔄</button>
       </div>`;
     }).join('');

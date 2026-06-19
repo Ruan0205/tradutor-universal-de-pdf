@@ -393,19 +393,29 @@ def create_app() -> FastAPI:
         return {"ok": True, "mapping": mappings}
 
     @app.get("/pdf/translated/{filename:path}")
-    def legacy_pdf_translated(filename: str, _: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
-        return _safe_pdf_response(settings.output_dir, filename)
+    def legacy_pdf_translated(
+        filename: str,
+        request: Request,
+        _: None = Depends(require_auth),
+        settings: Settings = Depends(get_settings),
+    ):
+        return _safe_pdf_response(settings.output_dir, filename, download=request.query_params.get("download") == "1")
 
     @app.get("/pdf/original/{filename:path}")
-    def legacy_pdf_original(filename: str, _: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
-        return _safe_pdf_response(settings.originals_dir, filename)
+    def legacy_pdf_original(
+        filename: str,
+        request: Request,
+        _: None = Depends(require_auth),
+        settings: Settings = Depends(get_settings),
+    ):
+        return _safe_pdf_response(settings.originals_dir, filename, download=request.query_params.get("download") == "1")
 
     @app.get("/pdf/in-progress")
     def legacy_pdf_in_progress(_: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
         candidates = sorted(settings.output_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not candidates:
             raise HTTPException(status_code=404, detail="No in-progress PDF is available")
-        return FileResponse(candidates[0], filename=candidates[0].name, media_type="application/pdf")
+        return FileResponse(candidates[0], filename=candidates[0].name, media_type="application/pdf", content_disposition_type="inline")
 
     @app.get("/pdf/in-progress/{filename:path}")
     def legacy_pdf_in_progress_named(filename: str, _: None = Depends(require_auth), settings: Settings = Depends(get_settings)):
@@ -735,7 +745,7 @@ def _source_stem_from_output(name: str) -> str:
     return stem
 
 
-def _safe_pdf_response(root: Path, filename: str) -> FileResponse:
+def _safe_pdf_response(root: Path, filename: str, *, download: bool = False) -> FileResponse:
     name = Path(filename).name
     path = (root / name).resolve()
     try:
@@ -744,7 +754,12 @@ def _safe_pdf_response(root: Path, filename: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="PDF not found")
     if not path.exists() or path.suffix.lower() != ".pdf":
         raise HTTPException(status_code=404, detail="PDF not found")
-    return FileResponse(path, filename=path.name, media_type="application/pdf")
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type="application/pdf",
+        content_disposition_type="attachment" if download else "inline",
+    )
 
 
 app = create_app()
