@@ -739,13 +739,19 @@ async function api(method, path, body) {
 }
 
 async function apiStart() { 
-  const startBtn = document.querySelector('[onclick="apiStart()"]');
-  if (startBtn) startBtn.disabled = true;
-  const r = await api('POST', '/api/start'); 
-  if (!r.ok) {
-    if (startBtn) startBtn.disabled = false;
+  const startBtn = document.getElementById('btnStart') || document.querySelector('[onclick="apiStart()"]');
+  if (startBtn) {
+    startBtn.disabled = true;
+    startBtn.dataset.originalText = startBtn.dataset.originalText || startBtn.textContent;
+    startBtn.textContent = 'Iniciando...';
   }
-  toast(r.ok ? 'Pipeline iniciado!' : r.error, !r.ok); 
+  const r = await api('POST', '/api/start'); 
+  if (startBtn) {
+    startBtn.disabled = false;
+    startBtn.textContent = startBtn.dataset.originalText || '▶ Iniciar';
+  }
+  const message = r.message || (r.ok ? 'Pipeline iniciado!' : r.error || 'Falha ao iniciar');
+  toast(message, !r.ok); 
   refresh(); 
 }
 async function apiStop() { const r = await api('POST', '/api/stop'); toast(r.ok ? 'Pipeline parado.' : r.error, !r.ok); refresh(); }

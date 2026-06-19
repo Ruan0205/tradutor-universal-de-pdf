@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from reportlab.pdfgen import canvas
 
 from translator.api import create_app, get_settings
+from translator.domain import JobStatus
 from translator.settings import Settings
 from translator.store import init_store
 
@@ -130,6 +131,29 @@ class ApiV1Tests(unittest.TestCase):
             self.assertEqual(unqueued_next_response.status_code, 200)
             self.assertEqual(status_after_unqueued_next["books"]["input"][0]["name"], "third.pdf")
             self.assertEqual(status_after_order["books"]["counts"]["untranslated"], 3)
+
+    def test_legacy_start_requeues_cancelled_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(base_dir=root / "data", database_url=f"sqlite:///{root / 'api.db'}", job_dispatcher="manual")
+            settings.ensure_dirs()
+            pdf = settings.input_dir / "restart-me.pdf"
+            make_pdf(pdf)
+            store = init_store(settings.database_url)
+            job = store.submit_pdf(pdf)
+            store.update_job(job["id"], status=JobStatus.CANCELLED.value, error="stopped")
+            app = create_app()
+            app.dependency_overrides[get_settings] = lambda: settings
+            client = TestClient(app)
+
+            response = client.post("/api/start")
+            refreshed = store.get_job(job["id"])
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["ok"])
+            self.assertEqual(refreshed["status"], JobStatus.QUEUED.value)
+            self.assertIsNone(refreshed["error"])
+            self.assertEqual(response.json()["restarted"][0]["name"], "restart-me.pdf")
 
 
 if __name__ == "__main__":

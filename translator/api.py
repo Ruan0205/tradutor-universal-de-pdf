@@ -273,12 +273,82 @@ def create_app() -> FastAPI:
     @app.post("/api/start")
     def legacy_start(_: None = Depends(require_auth), settings: Settings = Depends(get_settings), store: JobStore = Depends(get_store)):
         submitted = []
+        restarted = []
+        dispatched = []
+        dispatch_errors = []
+        translated_stems = {
+            _source_stem_from_output(path.name)
+            for path in settings.output_dir.glob("*.traduzido.pdf")
+            if path.is_file()
+        }
+
+        for job in store.list_jobs(limit=1000):
+            source = Path(job["source_path"])
+            if source.stem in translated_stems:
+                continue
+            if not source.exists() or source.suffix.lower() != ".pdf":
+                continue
+            if job["status"] in {
+                JobStatus.FAILED.value,
+                JobStatus.CANCELLED.value,
+                JobStatus.NEEDS_REVIEW.value,
+                JobStatus.PAUSED.value,
+            }:
+                restarted_job = store.update_job(
+                    job["id"],
+                    status=JobStatus.QUEUED.value,
+                    current_stage="queued",
+                    current_page=0,
+                    progress=0.0,
+                    error=None,
+                )
+                restarted.append(
+                    {
+                        "id": restarted_job["id"],
+                        "name": restarted_job["original_filename"],
+                        "status": restarted_job["status"],
+                    }
+                )
+
         for path in sorted(settings.input_dir.glob("*.pdf")):
+            if path.stem in translated_stems:
+                continue
             job = store.submit_pdf(path, metadata={"submitted_by": "dashboard", "authorized": False}, reuse_existing=False)
-            if job["status"] == JobStatus.QUEUED.value:
-                dispatch_job(job["id"], settings)
             submitted.append({"id": job["id"], "name": path.name, "status": job["status"]})
-        return {"ok": True, "submitted": submitted}
+
+        queued_jobs = [job for job in store.list_jobs(limit=1000) if job["status"] == JobStatus.QUEUED.value]
+        for job in queued_jobs:
+            try:
+                dispatched.append({"id": job["id"], "name": job["original_filename"], **dispatch_job(job["id"], settings)})
+            except Exception as exc:
+                dispatch_errors.append({"id": job["id"], "name": job["original_filename"], "error": str(exc)})
+
+        total = len(submitted) + len(restarted)
+        if dispatch_errors and not dispatched:
+            return {
+                "ok": False,
+                "submitted": submitted,
+                "restarted": restarted,
+                "dispatched": dispatched,
+                "dispatch_errors": dispatch_errors,
+                "error": "Não consegui iniciar a fila. Verifique se Redis/worker estão ativos.",
+            }
+        if total == 0 and not queued_jobs:
+            return {
+                "ok": True,
+                "submitted": submitted,
+                "restarted": restarted,
+                "dispatched": dispatched,
+                "message": "Nenhum PDF novo ou job parado para iniciar.",
+            }
+        return {
+            "ok": True,
+            "submitted": submitted,
+            "restarted": restarted,
+            "dispatched": dispatched,
+            "dispatch_errors": dispatch_errors,
+            "message": f"Fila iniciada: {len(submitted)} novo(s), {len(restarted)} reiniciado(s), {len(dispatched)} despacho(s).",
+        }
 
     @app.post("/api/stop")
     def legacy_stop(_: None = Depends(require_auth), store: JobStore = Depends(get_store)):
