@@ -24,7 +24,7 @@ from engine.document_ir import (
 )
 
 from .domain import JobStatus, PIPELINE_STAGES
-from .providers import GoogleTranslateImagesError, GoogleTranslateImagesProvider, InferenceProvider, TranslationRequest
+from .providers import GoogleTranslateImagesError, GoogleTranslateImagesProvider, InferenceProvider, TranslationRequest, TranslationResult
 from .settings import Settings
 from .store import JobStore
 
@@ -442,13 +442,7 @@ class PipelineRunner:
                     )
                     continue
 
-                result = self.inference.translate(
-                    TranslationRequest(
-                        block_id=block.block_id,
-                        text=block.original_text,
-                        glossary_terms=glossary_terms,
-                    )
-                )
+                result = self._translate_block(block, glossary_terms)
                 block.translated_text = result.translated_text
                 block.translation_provider = result.provider
                 block.translation_model = result.model
@@ -484,6 +478,58 @@ class PipelineRunner:
         ir.updated_at = now_iso()
         ir.history.append({"at": now_iso(), "event": "translated", "provider": self.inference.name, "model": self.inference.model})
         return ir, metrics
+
+    def _translate_block(self, block: IRBlock, glossary_terms: tuple[dict[str, str], ...]) -> TranslationResult:
+        chunks = _split_text_for_translation(block.original_text, _translation_chunk_token_budget(self.settings))
+        if len(chunks) == 1:
+            return self.inference.translate(
+                TranslationRequest(
+                    block_id=block.block_id,
+                    text=block.original_text,
+                    glossary_terms=glossary_terms,
+                )
+            )
+
+        translated_chunks: list[str] = []
+        warnings: list[str] = [f"translated_in_{len(chunks)}_chunks"]
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        duration_seconds = 0.0
+        provider = self.inference.name
+        model = self.inference.model
+        confidences: list[float] = []
+        for index, chunk in enumerate(chunks, start=1):
+            result = self.inference.translate(
+                TranslationRequest(
+                    block_id=f"{block.block_id}:part{index}",
+                    text=chunk,
+                    glossary_terms=glossary_terms,
+                )
+            )
+            translated_chunks.append(result.translated_text)
+            warnings.extend(result.warnings)
+            prompt_tokens += result.prompt_tokens
+            completion_tokens += result.completion_tokens
+            total_tokens += result.total_tokens
+            duration_seconds += result.duration_seconds
+            provider = result.provider
+            model = result.model
+            confidences.append(result.confidence)
+
+        return TranslationResult(
+            block_id=block.block_id,
+            translated_text="\n\n".join(part.strip() for part in translated_chunks if part.strip()),
+            provider=provider,
+            model=model,
+            confidence=(sum(confidences) / len(confidences)) if confidences else 0.75,
+            warnings=warnings,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            duration_seconds=duration_seconds,
+            tokens_per_second=round(completion_tokens / duration_seconds, 2) if duration_seconds > 0 else 0.0,
+        )
 
     def _compose_translated_pdf(self, source: Path, ir: IRDocument, output: Path) -> None:
         import fitz
@@ -796,6 +842,64 @@ def _should_translate_block_text(text: str) -> bool:
     if len(long_words) >= 5 and re.search(r"[.!?:;]", text):
         return True
     return False
+
+
+def _translation_chunk_token_budget(settings: Settings) -> int:
+    context_tokens = settings.llm_context_tokens or 2048
+    return max(256, min(1200, context_tokens - 512))
+
+
+def _split_text_for_translation(text: str, max_tokens: int) -> list[str]:
+    normalized = text.strip()
+    if not normalized:
+        return []
+    if _estimate_tokens(normalized) <= max_tokens:
+        return [normalized]
+
+    chunks: list[str] = []
+    current = ""
+    for unit in _translation_units(normalized, max_tokens):
+        candidate = f"{current}\n\n{unit}".strip() if current else unit
+        if current and _estimate_tokens(candidate) > max_tokens:
+            chunks.append(current.strip())
+            current = unit
+        else:
+            current = candidate
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks or [normalized]
+
+
+def _translation_units(text: str, max_tokens: int) -> Iterator[str]:
+    for paragraph in re.split(r"\n\s*\n", text):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if _estimate_tokens(paragraph) <= max_tokens:
+            yield paragraph
+            continue
+        for sentence in re.split(r"(?<=[.!?;:])\s+", paragraph):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if _estimate_tokens(sentence) <= max_tokens:
+                yield sentence
+                continue
+            yield from _hard_split_text(sentence, max_tokens)
+
+
+def _hard_split_text(text: str, max_tokens: int) -> Iterator[str]:
+    max_chars = max(400, max_tokens * 4)
+    remaining = text.strip()
+    while remaining:
+        if len(remaining) <= max_chars:
+            yield remaining
+            return
+        cut = remaining.rfind(" ", 0, max_chars)
+        if cut < max_chars * 0.55:
+            cut = max_chars
+        yield remaining[:cut].strip()
+        remaining = remaining[cut:].strip()
 
 
 def _translation_is_unchanged(source: str, translated: str) -> bool:

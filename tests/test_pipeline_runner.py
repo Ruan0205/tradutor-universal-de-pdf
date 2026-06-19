@@ -9,7 +9,7 @@ from reportlab.pdfgen import canvas
 
 from engine.document_ir import BBox, IRBlock, IRDocument, IRPage
 from translator.pipeline import PipelineRunner, _should_translate_block_text
-from translator.providers import MockProvider
+from translator.providers import MockProvider, TranslationResult
 from translator.settings import Settings
 from translator.store import init_store
 
@@ -46,6 +46,30 @@ class FakeImageProvider:
             image_bytes = buffer.getvalue()
 
         return Result()
+
+
+class RecordingProvider:
+    name = "recording"
+    model = "test-model"
+
+    def __init__(self):
+        self.requests = []
+
+    def translate(self, request):
+        self.requests.append(request)
+        return TranslationResult(
+            block_id=request.block_id,
+            translated_text=f"PT {len(self.requests)}",
+            provider=self.name,
+            model=self.model,
+            confidence=0.9,
+            warnings=[],
+            prompt_tokens=max(1, len(request.text) // 4),
+            completion_tokens=2,
+            total_tokens=max(1, len(request.text) // 4) + 2,
+            duration_seconds=1.0,
+            tokens_per_second=2.0,
+        )
 
 
 class PipelineRunnerTests(unittest.TestCase):
@@ -156,6 +180,27 @@ class PipelineRunnerTests(unittest.TestCase):
     def test_ocr_noise_is_not_sent_to_translation(self):
         self.assertFalse(_should_translate_block_text("LLY A. gsag Po a4 its aff Gee ARsa fCb wage Kee eee"))
         self.assertTrue(_should_translate_block_text("Armor Class 18 Hit Points 120 The creature makes two attacks."))
+
+    def test_long_translation_block_is_split_before_provider_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(
+                base_dir=root / "data",
+                database_url=f"sqlite:///{root / 'jobs.db'}",
+                llm_context_tokens=1024,
+            )
+            settings.ensure_dirs()
+            store = init_store(settings.database_url)
+            provider = RecordingProvider()
+            runner = PipelineRunner(settings, store, provider)
+            text = "The creature makes a bite attack and deals damage to the target. " * 180
+            block = IRBlock(block_id="b1", type="paragraph", bbox=BBox(1, 1, 90, 20), original_text=text)
+
+            result = runner._translate_block(block, ())
+
+            self.assertGreater(len(provider.requests), 1)
+            self.assertTrue(all(len(item.text) < len(text) for item in provider.requests))
+            self.assertIn("translated_in_", " ".join(result.warnings))
 
 
 if __name__ == "__main__":
